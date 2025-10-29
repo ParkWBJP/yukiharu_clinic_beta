@@ -69,7 +69,7 @@ export default function LoadingPage() {
           // 1) Build overview first; when done, move to results immediately
           if (form?.website) {
             try {
-              const rs = await fetch(`${base}/api/summarize`, {
+              const rs = await fetch(`${base}/summarize`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: form.website }), signal: controller.signal
               });

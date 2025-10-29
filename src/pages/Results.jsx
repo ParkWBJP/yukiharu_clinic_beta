@@ -199,7 +199,7 @@ export default function ResultsPage() {
       }, 10000);
       let form = null;
       try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
-      const r = await fetch(`${API_BASE}/api/generate/persona`, {
+      const r = await fetch(`${API_BASE}/generate/persona`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ form, index: idx }),
@@ -324,7 +324,7 @@ export default function ResultsPage() {
     const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
       (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
     setSummary({ status: 'loading', lines: [] });
-    fetch(`${API_BASE}/api/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+    fetch(`${API_BASE}/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data?.lines)) setSummary({ status: 'done', lines: data.lines });
