@@ -197,6 +197,89 @@ No markdown, no comments, no extra fields, no location.`;
   }
 });
 
+// Generate a single persona (stream-friendly endpoint)
+app.post('/api/generate/persona', async (req, res) => {
+  try {
+    const tStart = Date.now();
+    if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+
+    const form = req.body?.form || {};
+    const webSummary = req.body?.webSummary || {};
+    const index = Number.isFinite(req.body?.index) ? Number(req.body.index) : null;
+
+    const system = `You are the assistant for the hospital SEO service "YukiHaru AI".
+Return JSON ONLY, no markdown. Generate exactly ONE persona with 3 natural search-style Korean questions.
+
+Output format (JSON ONLY):
+{ "persona": { "name":"...", "age_range":"20대", "gender":"여성|남성", "interests":["..."], "goal":"...", "questions":["q1","q2","q3"] } }
+
+Rules:
+- Use webSummary when available; otherwise use formData only.
+- Focus on formData.serviceKeywords; write all text in Korean.
+- Do NOT include a location field.
+- questions must be EXACTLY 3 Korean strings.`;
+
+    const body = {
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}${index !== null ? `\nindex:${index}` : ''}` }
+      ],
+      temperature: 0.5,
+      response_format: { type: 'json_object' }
+    };
+
+    function laxParseJSON(str) {
+      if (!str) return null;
+      try { return JSON.parse(str); } catch {}
+      try {
+        let s = String(str);
+        s = s.replace(/```json|```/gi, '').trim();
+        s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"').replace(/,\s*([}\]])/g, '$1');
+        const start = s.indexOf('{'); const end = s.lastIndexOf('}');
+        if (start >= 0 && end > start) return JSON.parse(s.slice(start, end + 1));
+      } catch {}
+      return null;
+    }
+
+    const limit = Number(process.env.GENERATE_TIMEOUT_MS || 60000);
+    const controller = new AbortController();
+    const tOpenAIStart = Date.now();
+    const timer = setTimeout(() => controller.abort(), limit);
+    const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, max_tokens: 400 }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      throw new Error(`upstream_error:${t}`);
+    }
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content || '{}';
+    const parsed = laxParseJSON(String(content).replace(/```json|```/g, '').trim()) || {};
+    const persona = parsed.persona || (Array.isArray(parsed.personas) ? parsed.personas[0] : null);
+    if (!persona) {
+      console.warn('[generate/persona] upstream_empty');
+      return res.status(502).json({ error: 'upstream_empty' });
+    }
+
+    res.set('X-Timing-OpenAI-ms', String(Date.now() - tOpenAIStart));
+    res.set('X-Timing-Total-ms', String(Date.now() - tStart));
+    try {
+      res.set('X-Payload-Form-Bytes', String(JSON.stringify(form).length));
+      res.set('X-Payload-WebSummary-Bytes', String(JSON.stringify(webSummary).length));
+    } catch {}
+    return res.json({ persona });
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'timeout' });
+    console.error('[generate/persona] error:', e?.message || e);
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
 async function summarizeUrl(target) {
   if (!OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY');
   const url = target.startsWith('http') ? target : `https://${target}`;

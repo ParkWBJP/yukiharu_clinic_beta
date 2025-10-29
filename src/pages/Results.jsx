@@ -139,31 +139,7 @@ const MemoPersonaCard = React.memo(PersonaCard, (prev, next) => prev.data === ne
 export default function ResultsPage() {
   const { state } = useLocation();
   const navigate = useNavigate();
-  const [items, setItems] = React.useState(() => {
-    if (state?.personas?.length) {
-      // map incoming personas to include questions
-      const baseQs = state?.questions || [];
-      const mapped = state.personas.map((p, i) => ({
-        id: i+1,
-        name: normalizeName(p.name, i),
-        gender: toKoGender(p.gender || p.gender_focus),
-        ageRange: toKoAge(p.age_range || '20대'),
-        interests: p.interests || [],
-        purposes: [],
-        budget: 120,
-        questions: (p.questions || []).concat(baseQs).slice(0,3).map((q) => ({ text: typeof q === 'string' ? q : (q.text || String(q)) }))
-      }));
-      // Do not backfill with mock in production
-      if (false && mapped.length < 10) {
-        const filler = buildMock();
-        while (mapped.length < 10) {
-          mapped.push({ ...filler[mapped.length], id: mapped.length + 1 });
-        }
-      }
-      return mapped;
-    }
-    return [];
-  });
+  const [items, setItems] = React.useState([]);
   function normalizeName(name, i) {
     const pool = ['김서연','이수민','박지훈','최유진','정현우','한소희','오지민','유다인','서지우','강민서'];
     if (!name) return pool[i % pool.length];
@@ -188,7 +164,126 @@ export default function ResultsPage() {
   const [hospitalName, setHospitalName] = React.useState('');
   const source = 'api';
   const [apiLoading, setApiLoading] = React.useState(false);
-  const [delayStage, setDelayStage] = React.useState('idle'); // idle|soft|hard
+  const TOTAL = 10;
+  const CONCURRENCY = 3;
+  const [pending, setPending] = React.useState(TOTAL);
+  const [done, setDone] = React.useState(0);
+  const [failed, setFailed] = React.useState(0);
+  const [avgLatency, setAvgLatency] = React.useState(0);
+  const [toast, setToast] = React.useState(null);
+  const genIdRef = React.useRef(0);
+  const activeControllers = React.useRef(new Set());
+
+  function dispatchProgress(doneCount, totalCount, avgMs) {
+    try { window.dispatchEvent(new CustomEvent('progress_updated', { detail: { doneCount, totalCount, avgLatencyMs: Math.round(avgMs || 0) } })); } catch {}
+  }
+  function dispatchCreated(id, startedAt, finishedAt, latencyMs) {
+    try { window.dispatchEvent(new CustomEvent('persona_created', { detail: { id, startedAt, finishedAt, latencyMs } })); } catch {}
+  }
+  function dispatchFailed(id, errorCode, retryCount) {
+    try { window.dispatchEvent(new CustomEvent('persona_failed', { detail: { id, errorCode, retryCount } })); } catch {}
+  }
+
+  async function fetchOnePersona(idx, retry = 0) {
+    const startedAt = Date.now();
+    const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
+    const controller = new AbortController();
+    activeControllers.current.add(controller);
+    let softTimer = null;
+    const clearTimers = () => { if (softTimer) clearTimeout(softTimer); };
+    try {
+      softTimer = setTimeout(() => {
+        setToast('응답이 지연되고 있어 자동 재시도합니다.');
+        try { controller.abort(); } catch {}
+      }, 10000);
+      let form = null;
+      try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
+      const r = await fetch(`${API_BASE}/api/generate/persona`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ form, index: idx }),
+        signal: controller.signal
+      });
+      clearTimers();
+      activeControllers.current.delete(controller);
+      if (!r.ok) throw new Error(`upstream:${r.status}`);
+      const finishedAt = Date.now();
+      const latencyMs = finishedAt - startedAt;
+      const payload = await r.json();
+      const p = payload?.persona;
+      if (!p) throw new Error('empty_persona');
+      const view = {
+        id: idx + 1,
+        name: normalizeName(p.name, idx),
+        gender: toKoGender(p.gender || p.gender_focus),
+        ageRange: toKoAge(p.age_range || '20대'),
+        interests: p.interests || [],
+        purposes: [],
+        budget: 120,
+        questions: (p.questions || []).slice(0,3).map((q) => ({ text: typeof q === 'string' ? q : (q.text || String(q)) }))
+      };
+      dispatchCreated(view.id, startedAt, finishedAt, latencyMs);
+      return { ok: true, view, latencyMs };
+    } catch (e) {
+      clearTimers();
+      activeControllers.current.delete(controller);
+      if (retry < 2) {
+        return fetchOnePersona(idx, retry + 1);
+      }
+      dispatchFailed(idx + 1, String(e?.message || e), retry);
+      return { ok: false, error: e };
+    }
+  }
+
+  const startStreaming = React.useCallback(() => {
+    const myGen = ++genIdRef.current;
+    setItems([]);
+    setPending(TOTAL);
+    setDone(0);
+    setFailed(0);
+    setAvgLatency(0);
+    setToast(null);
+    const latencies = [];
+    let nextIndex = 0;
+    let running = 0;
+    let cancelled = false;
+    const maybeUpdate = () => {
+      const doneCount = latencies.length + failed;
+      const avg = latencies.length ? (latencies.reduce((a,b)=>a+b,0) / latencies.length) : 0;
+      setAvgLatency(avg);
+      dispatchProgress(doneCount, TOTAL, avg);
+    };
+    const launch = () => {
+      if (cancelled) return;
+      while (running < CONCURRENCY && nextIndex < TOTAL) {
+        const idx = nextIndex++;
+        running++;
+        fetchOnePersona(idx).then((res) => {
+          if (genIdRef.current !== myGen) return;
+          running--;
+          setPending((n) => n - 1);
+          if (res.ok) {
+            setItems((arr) => [...arr, res.view]);
+            setDone((d) => d + 1);
+            latencies.push(res.latencyMs);
+          } else {
+            setFailed((f) => f + 1);
+            setItems((arr) => [...arr, { id: idx + 1, name: '생성 실패', gender: '', ageRange: '', interests: [], purposes: [], budget: 0, questions: [], failed: true }]);
+          }
+          maybeUpdate();
+          launch();
+        });
+      }
+    };
+    launch();
+    return () => { cancelled = true; };
+  }, [failed]);
+
+  const cancelAll = () => {
+    activeControllers.current.forEach((c) => { try { c.abort(); } catch {} });
+    activeControllers.current.clear();
+  };
+  const restartAll = () => { cancelAll(); startStreaming(); };
   // Prevent duplicate API calls (React StrictMode, multi triggers)
   const bootOnceRef = React.useRef(false);
   const busyRef = React.useRef(false);
@@ -215,9 +310,8 @@ export default function ResultsPage() {
   React.useEffect(() => {
     if (bootOnceRef.current) return; // run once on first mount
     bootOnceRef.current = true;
-    if (!state?.personas?.length) {
-      regenerate();
-    }
+    // Start streaming generation immediately
+    startStreaming();
     // Fetch summary from website URL stored in localStorage
     let form = null;
     try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
@@ -234,64 +328,11 @@ export default function ResultsPage() {
       })
       .catch(() => setSummary({ status: 'error', lines: ['요약을 불러오지 못했습니다.'] }));
   }, [state?.personas?.length]);
-  const regenerate = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    try {
-      setApiLoading(true);
-      setDelayStage('idle');
-      let softTimer = setTimeout(() => setDelayStage('soft'), 15000);
-      let hardTimer = setTimeout(() => setDelayStage('hard'), 30000);
-      let form = null;
-      try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
-      const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
-      // Call generate using only form data (overview is fetched separately)
-      const t0 = (performance?.now?.() ?? Date.now());
-      const r = await fetch(`${API_BASE}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ form })
-      });
-      if (!r.ok) throw new Error('upstream');
-      try {
-        const frontMs = Math.round((performance?.now?.() ?? Date.now()) - t0);
-        const openaiMs = Number(r.headers.get('X-Timing-OpenAI-ms') || 0);
-        const totalMs = Number(r.headers.get('X-Timing-Total-ms') || 0);
-        // eslint-disable-next-line no-console
-        console.log('[timing] frontMs=', frontMs, 'openaiMs=', openaiMs, 'totalMs=', totalMs);
-      } catch {}
-      const payload = await r.json();
-      const baseQs = payload?.questions || [];
-      const mapped = (payload?.personas || []).map((p, i) => ({
-        id: i + 1,
-        name: normalizeName(p.name, i),
-        gender: toKoGender(p.gender || p.gender_focus),
-        ageRange: toKoAge(p.age_range || '20대'),
-        interests: p.interests || [],
-        purposes: [],
-        budget: 120,
-        questions: (p.questions || []).concat(baseQs).slice(0,3).map((q) => ({ text: typeof q === 'string' ? q : (q.text || String(q)) }))
-      }));
-      while (false && mapped.length < 10) {
-        const filler = buildMock();
-        mapped.push({ ...filler[mapped.length], id: mapped.length + 1 });
-      }
-      setItems(mapped);
-      setVisibleCount(0);
-    } catch (e) {
-      alert('API 호출에 실패했습니다. 잠시후 다시 시도해주세요.');
-    } finally {
-      setApiLoading(false);
-      busyRef.current = false;
-      setDelayStage('idle');
-      try { clearTimeout(softTimer); } catch {}
-      try { clearTimeout(hardTimer); } catch {}
-    }
-  };
+  // remove bulk regenerate; using streaming instead
   const applyChange = (index, next) => {
     setItems((arr) => arr.map((it, i) => i === index ? next : it));
   };
-  const filtered = items.slice(0, visibleCount);
+  const filtered = items; // stream: show immediately
   const toCSV = () => {
     const rows = [['name','gender','ageRange','interests','purposes','budget','question']];
     items.forEach((p) => (p.questions||[]).forEach((q) => {
@@ -313,6 +354,9 @@ export default function ResultsPage() {
       <div className="summary-card">
         <div className="summary-title2">{hospitalName ? `${hospitalName} AI Over view` : 'AI Over view'}</div>
         <div className="summary-title">AI 병원 요약 정보</div>
+        <div className="summary-note muted small">
+          {done}/{TOTAL} 생성됨 · 평균 {Math.round(avgLatency)}ms {done < TOTAL ? <>· ETA ~ {Math.max(0, Math.round((TOTAL - done) * (avgLatency || 1000) / CONCURRENCY / 1000))}s</> : null}
+        </div>
         {summary.status === 'loading' ? (
           <div className="summary-loading"><span className="spinner" /> 요약 중</div>
         ) : (
@@ -327,18 +371,24 @@ export default function ResultsPage() {
       {items.length === 0 && (
         <div className="persona-loading" aria-live="polite">
           <span className="spinner" /> Generating profiles...
-          {delayStage === 'soft' && <div className="muted small">처리가 다소 지연되고 있습니다. 잠시만 기다려 주세요.</div>}
-          {delayStage === 'hard' && <div className="muted small">응답이 지연 중입니다. 생성은 계속 진행 중입니다.</div>}
         </div>
       )}
       <div className="grid">
         {filtered.map((p, idx) => (
-          <MemoPersonaCard key={p.id} data={p} onChange={(next)=>applyChange(idx, next)} />
+          p.failed
+            ? (<div key={`failed-${p.id}`} className="persona-card"><div className="pc-head left"><div className="pc-title"><div className="inline-edit name-center">생성 실패</div><span className="badge">실패</span></div></div></div>)
+            : (<MemoPersonaCard key={p.id} data={p} onChange={(next)=>applyChange(idx, next)} />)
+        ))}
+        {Array.from({ length: Math.max(0, TOTAL - items.length) }).map((_, i) => (
+          <div key={`skel-${i}`} className="persona-card"><div className="pc-head left"><div className="pc-title"><div className="inline-edit name-center muted">생성 중...</div></div></div></div>
         ))}
       </div>
       <div className="center-actions">
+        <button className="btn btn-ghost" onClick={cancelAll}>취소</button>
+        <button className="btn btn-primary" onClick={restartAll}>재시작</button>
         <button className="btn btn-primary" onClick={()=>navigate('/persona')}>AI 검색 리포트 확인</button>
       </div>
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }
