@@ -283,7 +283,14 @@ export default function ResultsPage() {
     activeControllers.current.forEach((c) => { try { c.abort(); } catch {} });
     activeControllers.current.clear();
   };
-  const restartAll = () => { cancelAll(); startStreaming(); };
+  const restartAll = () => {
+    cancelAll();
+    if (summary.status === 'error') {
+      // Retry overview as well when it previously failed
+      try { fetchOverview(); } catch {}
+    }
+    startStreaming();
+  };
   // Prevent duplicate API calls (React StrictMode, multi triggers)
   const bootOnceRef = React.useRef(false);
   const busyRef = React.useRef(false);
@@ -307,17 +314,12 @@ export default function ResultsPage() {
     setVisibleCount((n) => n || total);
   }, [items.length]);
   React.useEffect(() => { prevLenRef.current = items.length; }, [items.length]);
-  React.useEffect(() => {
-    if (bootOnceRef.current) return; // run once on first mount
-    bootOnceRef.current = true;
-    // Start streaming generation immediately
-    startStreaming();
-    // Fetch summary from website URL stored in localStorage
+  const fetchOverview = React.useCallback(() => {
     let form = null;
     try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
     const url = form?.website;
     if (form?.hospitalName) setHospitalName(form.hospitalName);
-    if (!url) return setSummary({ status: 'error', lines: ['병원 URL이 없어 요약할 수 없습니다.'] });
+    if (!url) { setSummary({ status: 'error', lines: ['병원 URL이 없어 요약할 수 없습니다.'] }); return; }
     const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
     setSummary({ status: 'loading', lines: [] });
     fetch(`${API_BASE}/api/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
@@ -327,7 +329,16 @@ export default function ResultsPage() {
         else setSummary({ status: 'error', lines: ['요약을 불러오지 못했습니다.'] });
       })
       .catch(() => setSummary({ status: 'error', lines: ['요약을 불러오지 못했습니다.'] }));
-  }, [state?.personas?.length]);
+  }, []);
+
+  React.useEffect(() => {
+    if (bootOnceRef.current) return; // run once on first mount
+    bootOnceRef.current = true;
+    // Start streaming generation immediately
+    startStreaming();
+    // Fetch overview
+    fetchOverview();
+  }, [startStreaming, fetchOverview]);
   // remove bulk regenerate; using streaming instead
   const applyChange = (index, next) => {
     setItems((arr) => arr.map((it, i) => i === index ? next : it));
@@ -392,7 +403,9 @@ export default function ResultsPage() {
       </div>
       <div className="center-actions">
         <button className="btn btn-ghost" onClick={cancelAll}>취소</button>
-        <button className="btn btn-primary" onClick={restartAll}>재시작</button>
+        {(summary.status === 'error' || failed > 0) && (
+          <button className="btn btn-primary" onClick={restartAll}>재시작</button>
+        )}
         <button className="btn btn-primary" onClick={()=>navigate('/persona')}>AI 검색 리포트 확인</button>
       </div>
       {toast && <div className="toast" role="status">{toast}</div>}
