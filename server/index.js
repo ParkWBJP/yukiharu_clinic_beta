@@ -354,6 +354,11 @@ app.get('/api/summarize', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-});
+// Only start a local server when not running on Vercel/serverless
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server listening on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
