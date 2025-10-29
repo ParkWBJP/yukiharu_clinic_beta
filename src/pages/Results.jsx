@@ -402,7 +402,6 @@ export default function ResultsPage() {
         ))}
       </div>
       <div className="center-actions">
-        <button className="btn btn-ghost" onClick={cancelAll}>취소</button>
         {(summary.status === 'error' || failed > 0) && (
           <button className="btn btn-primary" onClick={restartAll}>재시작</button>
         )}
