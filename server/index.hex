@@ -1,0 +1,209 @@
+﻿import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 8790;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || process.env.VITE_OPENAI_BASE_URL || 'https://api.openai.com/v1';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || process.env.VITE_OPENAI_MODEL || 'gpt-4o-mini';
+
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
+// POST /api/generate ??create personas+questions using OpenAI (no local fallback)
+app.post('/api/generate', async (req, res) => {
+  try {
+    if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+
+    const form = req.body?.form || {};
+    const webSummary = req.body?.webSummary || {};
+
+    \ \ \ \ const\ system\ =\ `당신은\ 병원\ 전용\ AI\ 검색최적화\ 서비스\ "YukiHaru\ AI"의\ 어시스턴트입니다\.\n아래\ 두\ 가지\ 정보를\ 반드시\ 함께\ 참고하여\ 결과를\ 생성하세요\.\n\n①\ 사용자가\ 입력한\ 병원\ 정보\ \(formData\)\n②\ AI가\ 병원\ 홈페이지\(URL\)에서\ 분석한\ 요약\ 정보\ \(webSummary\)\n\n두\ 정보를\ 종합해\ 병원의\ 실제\ 진료\ 서비스와\ 타겟층을\ 가장\ 잘\ 반영하는\n페르소나\ 10명과\ 각\ 페르소나의\ 질문\ 3개를\ 생성하세요\.\n\n출력\ 형식\(반드시\ JSON만\):\n\{\ "personas":\ \[\ \{\ "name":"홍지은",\ "age_range":"20대",\ "gender":"여성",\ "interests":\["무보형물\ 코성형"],\ "goal":"…",\ "questions":\["…","…","…"]\ }\ ]\ }\n\n작성\ 규칙:\n-\ formData와\ webSummary를\ 함께\ 참고해\ 작성\n-\ formData\.serviceKeywords를\ 핵심\ 주제로\ 삼되\ 모든\ 페르소나/질문이\ 자연스럽게\ 연관되도록\ 작성\n-\ 관련\ 없는\ 시술\(예:\ 쌍꺼풀,\ 보톡스\ 등\)\ 포함\ 금지\n-\ 홈페이지의\ 브랜드\ 톤/주요\ 서비스/환자\ 타겟을\ 반영\n-\ location\ 필드\ 제외\n-\ 각\ 페르소나는\ 질문\ 정확히\ 3개,\ 총\ 10명\ →\ 30문항\n-\ 주석/설명/마크다운/코드펜스\ 없이\ 순수\ JSON만\ 출력\n-\ 전체\ 응답은\ 600~800\ 토큰\ 내`;
+
+    const body = {
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}` }
+      ],
+      temperature: 0.4,
+      response_format: { type: 'json_object' }
+    };
+
+    
+    // Stricter retry once when upstream is empty
+    async function retryUpstream() {
+      const strict = {
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: 'JSON ONLY. Return exactly {"personas":[{name,age_range,gender,interests,goal,questions(3 strings)} x10]}. No markdown, no comments.' },
+          { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}` }
+        ],
+        temperature: 0.2,
+        response_format: { type: 'json_object' }
+      };
+      const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...strict, max_tokens: 900 })
+      });
+      if (!resp.ok) return { personas: [], questions: [] };
+      const data = await resp.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
+      const clean = String(content).replace(/```json|```/g, '').trim();
+      try { return JSON.parse(clean); } catch { return { personas: [], questions: [] }; }
+    }async function callUpstream() {
+      const limit = Number(process.env.GENERATE_TIMEOUT_MS || 60000);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), limit);
+      const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ...body, max_tokens: 900 }),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => '');
+        throw new Error(`upstream_error:${t}`);
+      }
+      const data = await resp.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
+      if (process.env.DEBUG_GEN) {
+        try { console.log('[upstream content]', String(content).slice(0, 200)); } catch {}
+      }
+      const clean = String(content).replace(/```json|```/g, '').trim();
+      try {
+        return JSON.parse(clean);
+      } catch {
+        return { personas: [], questions: [] };
+      }
+    }
+
+    // Normalize only when personas exist, do not fabricate new content
+    async function enforceShape(current) {
+      if (!Array.isArray(current.personas) || current.personas.length === 0) return current;
+      const bad = current.personas.some((p) => !Array.isArray(p?.questions) || p.questions.length !== 3);
+      if (!bad && current.personas.length === 10) return current;
+      const prompt = 'Return JSON ONLY with exactly 10 personas; each persona has name, age_range, gender, interests (array), and questions (EXACTLY 3 strings). Keep original content; do not invent new topics.';
+      const fix = {
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: JSON.stringify(current).slice(0, 12000) }
+        ],
+        temperature: 0.2,
+        response_format: { type: 'json_object' }
+      };
+      const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...fix, max_tokens: 900 })
+      });
+      if (!resp.ok) return current;
+      try {
+        const data = await resp.json();
+        return JSON.parse(data.choices?.[0]?.message?.content || '{}');
+      } catch { return current; }
+    }
+
+    let upstream = await callUpstream();\n    if (!Array.isArray(upstream.personas) || upstream.personas.length === 0) {\n      upstream = await retryUpstream();\n    }
+    const final = await enforceShape(upstream);
+    if (!Array.isArray(final.personas) || final.personas.length === 0) {
+      return res.status(502).json({ error: 'upstream_empty' });
+    }
+    return res.json(final);
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'timeout' });
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
+// Summarize hospital website content (3~5 short lines)
+async function summarizeUrl(target) {
+  if (!OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY');
+  const url = target.startsWith('http') ? target : `https://${target}`;
+  let html = '';
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': 'YukiHaruBot/1.0 (+http://localhost)' }, redirect: 'follow' });
+    html = await r.text();
+  } catch {}
+  const text = (html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 6000);
+
+  const prompt = 'Return JSON ONLY as {"lines":["..." ]} with 3-5 short Korean lines describing 二쇱슂 ?쒕퉬???寃??ㅼ썙???? 媛?80???대궡.';
+  const body = {
+    model: OPENAI_MODEL,
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: `URL: ${url}\nTEXT: ${text}` }
+    ],
+    temperature: 0.3,
+    response_format: { type: 'json_object' }
+  };
+  const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => '');
+    throw new Error(`upstream_error:${err}`);
+  }
+  const data = await resp.json();
+  try {
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+    const lines = Array.isArray(parsed?.lines) ? parsed.lines : [];
+    return { lines: lines.length ? lines : ['?붿빟??遺덈윭?ㅼ? 紐삵뻽?듬땲??'] };
+  } catch {
+    return { lines: ['?붿빟??遺덈윭?ㅼ? 紐삵뻽?듬땲??'] };
+  }
+}
+
+app.post('/api/summarize', async (req, res) => {
+  try {
+    const url = req.body?.url;
+    if (!url) return res.status(400).json({ error: 'missing_url' });
+    const result = await summarizeUrl(url);
+    return res.json(result);
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const status = msg.startsWith('upstream_error') ? 502 : 500;
+    return res.status(status).json({ error: msg });
+  }
+});
+
+app.get('/api/summarize', async (req, res) => {
+  try {
+    const url = String(req.query.url || '');
+    if (!url) return res.status(400).json({ error: 'missing_url' });
+    const result = await summarizeUrl(url);
+    return res.json(result);
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const status = msg.startsWith('upstream_error') ? 502 : 500;
+    return res.status(status).json({ error: msg });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+});
+
+
+
+

@@ -1,0 +1,91 @@
+{
+  "title": "YukiHaru AI – 病院情報入力ページ",
+  "actions": {
+    "next": "次へ",
+    "generate": "AI顧客プロフィールを生成する"
+  },
+  "loading": {
+    "title": "AI顧客プロフィールを生成中...",
+    "subtitle": "少々お待ちください。"
+  },
+  "fields": {
+    "website": {
+      "label": "ホームページ（ドメイン）",
+      "placeholder": "例: https://clinic-example.jp"
+    },
+    "hospitalName": {
+      "label": "病院名",
+      "placeholder": "例: ユキハル美容外科"
+    },
+    "location": {
+      "city": "市/道",
+      "district": "区/郡",
+      "keywords": "主要エリア・キーワード",
+      "placeholder": "カロスキル、清潭洞（チョンダムドン）、狎鴎亭（アックジョン）"
+    },
+    "services": {
+      "label": "診療科目キーワード / 主要サービス",
+      "placeholder": "二重まぶた、鼻整形、リフティング"
+    },
+    "target": {
+      "label": "主要ターゲット — 性別",
+      "male": "男性",
+      "female": "女性",
+      "balance": "男 {{male}}% / 女 {{female}}%"
+    },
+    "ages": {
+      "label": "年齢",
+      "10s": "10代",
+      "20s": "20代",
+      "30s": "30代",
+      "40s": "40代",
+      "50s": "50代",
+      "60s": "60代",
+      "70sPlus": "70代以上"
+    },
+    "summary": {
+      "label": "病院の一言紹介（任意）",
+      "placeholder": "20〜30代女性中心の自然な二重専門クリニック"
+    }
+  },
+  "errors": {
+    "required": "必須項目です。",
+    "invalidUrl": "正しいURLを入力してください。",
+    "ageRequired": "年齢を1つ以上選択してください。"
+  },
+  "locations": {
+    "cities": {
+      "seoul": "ソウル特別市",
+      "busan": "プサン（釜山）広域市",
+      "incheon": "インチョン（仁川）広域市",
+      "daegu": "テグ（大邱）広域市"
+    },
+    "districts": {
+      "seoul": {
+        "gangnam": "カンナム（江南）区",
+        "jongno": "ジョンノ（鐘路）区",
+        "songpa": "ソンパ（松坡）区",
+        "mapo": "マポ（麻浦）区",
+        "yongsan": "ヨンサン（龍山）区"
+      },
+      "busan": {
+        "haeundae": "ヘウンデ（海雲台）区",
+        "suyeong": "スヨン（水営）区",
+        "busanjin": "プサンジン（釜山鎮）区",
+        "nam": "ナム（南）区"
+      },
+      "incheon": {
+        "yeonsu": "ヨンス（延寿）区",
+        "namdong": "ナムドン（南洞）区",
+        "bupyeong": "プピョン（富平）区",
+        "jung": "チュン（中）区"
+      },
+      "daegu": {
+        "suseong": "スソン（壽城）区",
+        "jung": "チュン（中）区",
+        "dong": "ドン（東）区",
+        "dalseo": "タルソ（達西）区"
+      }
+    }
+  }
+}

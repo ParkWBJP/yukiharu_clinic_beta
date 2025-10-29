@@ -1,0 +1,91 @@
+{
+  "title": "YukiHaru AI – 병원정보 입력 페이지",
+  "actions": {
+    "next": "다음으로",
+    "generate": "AI 고객 프로필 생성하기"
+  },
+  "loading": {
+    "title": "AI 고객 프로필 생성 중...",
+    "subtitle": "잠시만 기다려 주세요."
+  },
+  "fields": {
+    "website": {
+      "label": "홈페이지(도메인)",
+      "placeholder": "예: https://clinic-example.jp"
+    },
+    "hospitalName": {
+      "label": "병원명",
+      "placeholder": "예: 유키하루성형외과"
+    },
+    "location": {
+      "city": "시/도",
+      "district": "구/군",
+      "keywords": "주요위치 키워드",
+      "placeholder": "가로수길, 청담동, 압구정"
+    },
+    "services": {
+      "label": "진료과 세부키워드 / 주요서비스",
+      "placeholder": "쌍꺼풀, 코성형, 리프팅"
+    },
+    "target": {
+      "label": "주요타겟 — 성별",
+      "male": "남성",
+      "female": "여성",
+      "balance": "남 {{male}}% / 여 {{female}}%"
+    },
+    "ages": {
+      "label": "연령",
+      "10s": "10대",
+      "20s": "20대",
+      "30s": "30대",
+      "40s": "40대",
+      "50s": "50대",
+      "60s": "60대",
+      "70sPlus": "70대 이상"
+    },
+    "summary": {
+      "label": "병원 한줄 소개 (선택)",
+      "placeholder": "20~30대 여성 중심의 자연스러운 쌍꺼풀 전문 클리닉"
+    }
+  },
+  "errors": {
+    "required": "필수 항목입니다.",
+    "invalidUrl": "올바른 URL을 입력하세요.",
+    "ageRequired": "연령을 하나 이상 선택하세요."
+  },
+  "locations": {
+    "cities": {
+      "seoul": "서울특별시",
+      "busan": "부산광역시",
+      "incheon": "인천광역시",
+      "daegu": "대구광역시"
+    },
+    "districts": {
+      "seoul": {
+        "gangnam": "강남구",
+        "jongno": "종로구",
+        "songpa": "송파구",
+        "mapo": "마포구",
+        "yongsan": "용산구"
+      },
+      "busan": {
+        "haeundae": "해운대구",
+        "suyeong": "수영구",
+        "busanjin": "부산진구",
+        "nam": "남구"
+      },
+      "incheon": {
+        "yeonsu": "연수구",
+        "namdong": "남동구",
+        "bupyeong": "부평구",
+        "jung": "중구"
+      },
+      "daegu": {
+        "suseong": "수성구",
+        "jung": "중구",
+        "dong": "동구",
+        "dalseo": "달서구"
+      }
+    }
+  }
+}
