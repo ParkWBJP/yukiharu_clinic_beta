@@ -376,11 +376,18 @@ export default function ResultsPage() {
       <div className="grid">
         {filtered.map((p, idx) => (
           p.failed
-            ? (<div key={`failed-${p.id}`} className="persona-card"><div className="pc-head left"><div className="pc-title"><div className="inline-edit name-center">생성 실패</div><span className="badge">실패</span></div></div></div>)
-            : (<MemoPersonaCard key={p.id} data={p} onChange={(next)=>applyChange(idx, next)} />)
-        ))}
-        {Array.from({ length: Math.max(0, TOTAL - items.length) }).map((_, i) => (
-          <div key={`skel-${i}`} className="persona-card"><div className="pc-head left"><div className="pc-title"><div className="inline-edit name-center muted">생성 중...</div></div></div></div>
+            ? (
+              <div key={`failed-${p.id}`} className="persona-card">
+                <div className="pc-head left">
+                  <div className="pc-title">
+                    <div className="inline-edit name-center">생성 실패</div>
+                    <span className="badge">실패</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <MemoPersonaCard key={p.id} data={p} onChange={(next)=>applyChange(idx, next)} />
+            )
         ))}
       </div>
       <div className="center-actions">
