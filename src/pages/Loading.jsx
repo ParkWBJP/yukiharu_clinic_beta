@@ -56,7 +56,9 @@ export default function LoadingPage() {
 
     // Pick API base: env → 8790 → 8787 (first that works)
     const envBase = import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE);
-    const candidates = [envBase || 'http://localhost:8790'];
+    const fallbackBase = (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost')
+      ? 'http://localhost:8790' : '/api';
+    const candidates = [envBase || fallbackBase];
 
     const tryPost = async (baseList) => {
       for (const base of baseList) {

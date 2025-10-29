@@ -19,6 +19,7 @@ app.get('/health', (_req, res) => {
 
 app.post('/api/generate', async (req, res) => {
   try {
+    const tStart = Date.now();
     if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
 
     const form = req.body?.form || {};
@@ -171,17 +172,110 @@ No markdown, no comments, no extra fields, no location.`;
       } catch { return current; }
     }
 
+    const tOpenAIStart = Date.now();
     let upstream = await callUpstream();
     if (!Array.isArray(upstream.personas) || upstream.personas.length === 0) {
       upstream = await strictRetry();
     }
     const final = await enforceShape(upstream);
     if (!Array.isArray(final.personas) || final.personas.length === 0) {
+      console.warn('[generate] upstream_empty openaiMs=', Date.now() - tOpenAIStart, 'totalMs=', Date.now() - tStart);
       return res.status(502).json({ error: 'upstream_empty' });
     }
+    // Timing and payload headers for diagnostics
+    res.set('X-Timing-OpenAI-ms', String(Date.now() - tOpenAIStart));
+    res.set('X-Timing-Total-ms', String(Date.now() - tStart));
+    try {
+      res.set('X-Payload-Form-Bytes', String(JSON.stringify(form).length));
+      res.set('X-Payload-WebSummary-Bytes', String(JSON.stringify(webSummary).length));
+    } catch {}
     return res.json(final);
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).json({ error: 'timeout' });
+    console.error('[generate] error:', e?.message || e);
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
+// Generate a single persona (stream-friendly endpoint)
+app.post('/api/generate/persona', async (req, res) => {
+  try {
+    const tStart = Date.now();
+    if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+
+    const form = req.body?.form || {};
+    const webSummary = req.body?.webSummary || {};
+    const index = Number.isFinite(req.body?.index) ? Number(req.body.index) : null;
+
+    const system = `You are the assistant for the hospital SEO service "YukiHaru AI".
+Return JSON ONLY, no markdown. Generate exactly ONE persona with 3 natural search-style Korean questions.
+
+Output format (JSON ONLY):
+{ "persona": { "name":"...", "age_range":"20대", "gender":"여성|남성", "interests":["..."], "goal":"...", "questions":["q1","q2","q3"] } }
+
+Rules:
+- Use webSummary when available; otherwise use formData only.
+- Focus on formData.serviceKeywords; write all text in Korean.
+- Do NOT include a location field.
+- questions must be EXACTLY 3 Korean strings.`;
+
+    const body = {
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}${index !== null ? `\nindex:${index}` : ''}` }
+      ],
+      temperature: 0.5,
+      response_format: { type: 'json_object' }
+    };
+
+    function laxParseJSON(str) {
+      if (!str) return null;
+      try { return JSON.parse(str); } catch {}
+      try {
+        let s = String(str);
+        s = s.replace(/```json|```/gi, '').trim();
+        s = s.replace(/[\u2018\u2019\u201C\u201D]/g, '"').replace(/,\s*([}\]])/g, '$1');
+        const start = s.indexOf('{'); const end = s.lastIndexOf('}');
+        if (start >= 0 && end > start) return JSON.parse(s.slice(start, end + 1));
+      } catch {}
+      return null;
+    }
+
+    const limit = Number(process.env.GENERATE_TIMEOUT_MS || 60000);
+    const controller = new AbortController();
+    const tOpenAIStart = Date.now();
+    const timer = setTimeout(() => controller.abort(), limit);
+    const resp = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, max_tokens: 400 }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      throw new Error(`upstream_error:${t}`);
+    }
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content || '{}';
+    const parsed = laxParseJSON(String(content).replace(/```json|```/g, '').trim()) || {};
+    const persona = parsed.persona || (Array.isArray(parsed.personas) ? parsed.personas[0] : null);
+    if (!persona) {
+      console.warn('[generate/persona] upstream_empty');
+      return res.status(502).json({ error: 'upstream_empty' });
+    }
+
+    res.set('X-Timing-OpenAI-ms', String(Date.now() - tOpenAIStart));
+    res.set('X-Timing-Total-ms', String(Date.now() - tStart));
+    try {
+      res.set('X-Payload-Form-Bytes', String(JSON.stringify(form).length));
+      res.set('X-Payload-WebSummary-Bytes', String(JSON.stringify(webSummary).length));
+    } catch {}
+    return res.json({ persona });
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'timeout' });
+    console.error('[generate/persona] error:', e?.message || e);
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
   }
 });
@@ -234,7 +328,9 @@ app.post('/api/summarize', async (req, res) => {
   try {
     const url = req.body?.url;
     if (!url) return res.status(400).json({ error: 'missing_url' });
+    const t0 = Date.now();
     const result = await summarizeUrl(url);
+    res.set('X-Timing-Total-ms', String(Date.now() - t0));
     return res.json(result);
   } catch (e) {
     const msg = String(e?.message || e);
@@ -247,7 +343,9 @@ app.get('/api/summarize', async (req, res) => {
   try {
     const url = String(req.query.url || '');
     if (!url) return res.status(400).json({ error: 'missing_url' });
+    const t0 = Date.now();
     const result = await summarizeUrl(url);
+    res.set('X-Timing-Total-ms', String(Date.now() - t0));
     return res.json(result);
   } catch (e) {
     const msg = String(e?.message || e);
@@ -256,6 +354,11 @@ app.get('/api/summarize', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-});
+// Only start a local server when not running on Vercel/serverless
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server listening on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
