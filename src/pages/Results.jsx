@@ -186,7 +186,8 @@ export default function ResultsPage() {
 
   async function fetchOnePersona(idx, retry = 0) {
     const startedAt = Date.now();
-    const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
+    const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
+      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
     const controller = new AbortController();
     activeControllers.current.add(controller);
     let softTimer = null;
@@ -320,7 +321,8 @@ export default function ResultsPage() {
     const url = form?.website;
     if (form?.hospitalName) setHospitalName(form.hospitalName);
     if (!url) { setSummary({ status: 'error', lines: ['병원 URL이 없어 요약할 수 없습니다.'] }); return; }
-    const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
+    const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
+      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
     setSummary({ status: 'loading', lines: [] });
     fetch(`${API_BASE}/api/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
       .then((r) => r.json())
