@@ -1,18 +1,20 @@
 ﻿import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 function useIO(callback) {
+  const cbRef = React.useRef(callback);
+  React.useEffect(() => { cbRef.current = callback; }, [callback]);
   const ref = React.useRef(null);
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
-        if (e.isIntersecting) callback?.();
+        if (e.isIntersecting) cbRef.current?.();
       });
     }, { threshold: 0.1 });
     io.observe(el);
     return () => io.disconnect();
-  }, [callback]);
+  }, []);
   return ref;
 }
 // Safe gender avatar using unicode escapes (no encoding issues)
@@ -145,8 +147,7 @@ export default function ResultsPage() {
         id: i+1,
         name: normalizeName(p.name, i),
         gender: toKoGender(p.gender || p.gender_focus),
-        ageRange: toKoAge(p.age_range || '20?'),
-        location: p.location || '\uB300\uD55C\uBBFC\uAD6D',
+        ageRange: toKoAge(p.age_range || '20대'),
         interests: p.interests || [],
         purposes: [],
         budget: 120,
@@ -187,6 +188,7 @@ export default function ResultsPage() {
   const [hospitalName, setHospitalName] = React.useState('');
   const source = 'api';
   const [apiLoading, setApiLoading] = React.useState(false);
+  const [delayStage, setDelayStage] = React.useState('idle'); // idle|soft|hard
   // Prevent duplicate API calls (React StrictMode, multi triggers)
   const bootOnceRef = React.useRef(false);
   const busyRef = React.useRef(false);
@@ -221,7 +223,6 @@ export default function ResultsPage() {
     try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
     const url = form?.website;
     if (form?.hospitalName) setHospitalName(form.hospitalName);
-    if (form?.hospitalName) setHospitalName(form.hospitalName);
     if (!url) return setSummary({ status: 'error', lines: ['병원 URL이 없어 요약할 수 없습니다.'] });
     const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
     setSummary({ status: 'loading', lines: [] });
@@ -238,24 +239,34 @@ export default function ResultsPage() {
     busyRef.current = true;
     try {
       setApiLoading(true);
+      setDelayStage('idle');
+      let softTimer = setTimeout(() => setDelayStage('soft'), 15000);
+      let hardTimer = setTimeout(() => setDelayStage('hard'), 30000);
       let form = null;
       try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
       const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8790';
       // Call generate using only form data (overview is fetched separately)
+      const t0 = (performance?.now?.() ?? Date.now());
       const r = await fetch(`${API_BASE}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ form })
       });
       if (!r.ok) throw new Error('upstream');
+      try {
+        const frontMs = Math.round((performance?.now?.() ?? Date.now()) - t0);
+        const openaiMs = Number(r.headers.get('X-Timing-OpenAI-ms') || 0);
+        const totalMs = Number(r.headers.get('X-Timing-Total-ms') || 0);
+        // eslint-disable-next-line no-console
+        console.log('[timing] frontMs=', frontMs, 'openaiMs=', openaiMs, 'totalMs=', totalMs);
+      } catch {}
       const payload = await r.json();
       const baseQs = payload?.questions || [];
       const mapped = (payload?.personas || []).map((p, i) => ({
         id: i + 1,
         name: normalizeName(p.name, i),
         gender: toKoGender(p.gender || p.gender_focus),
-        ageRange: toKoAge(p.age_range || '20?'),
-        location: p.location || '\uB300\uD55C\uBBFC\uAD6D',
+        ageRange: toKoAge(p.age_range || '20대'),
         interests: p.interests || [],
         purposes: [],
         budget: 120,
@@ -272,6 +283,9 @@ export default function ResultsPage() {
     } finally {
       setApiLoading(false);
       busyRef.current = false;
+      setDelayStage('idle');
+      try { clearTimeout(softTimer); } catch {}
+      try { clearTimeout(hardTimer); } catch {}
     }
   };
   const applyChange = (index, next) => {
@@ -279,9 +293,9 @@ export default function ResultsPage() {
   };
   const filtered = items.slice(0, visibleCount);
   const toCSV = () => {
-    const rows = [['name','gender','ageRange','location','interests','purposes','budget','question']];
+    const rows = [['name','gender','ageRange','interests','purposes','budget','question']];
     items.forEach((p) => (p.questions||[]).forEach((q) => {
-      rows.push([p.name,p.gender,p.ageRange,p.location,(p.interests||[]).join('|'),(p.purposes||[]).join('|'),p.budget,q.text]);
+      rows.push([p.name,p.gender,p.ageRange,(p.interests||[]).join('|'),(p.purposes||[]).join('|'),p.budget,q.text]);
     }));
     return rows.map(r => r.map(v => '"'+String(v).replaceAll('"','""')+'"').join(',')).join('\n');
   };
@@ -313,6 +327,8 @@ export default function ResultsPage() {
       {items.length === 0 && (
         <div className="persona-loading" aria-live="polite">
           <span className="spinner" /> Generating profiles...
+          {delayStage === 'soft' && <div className="muted small">처리가 다소 지연되고 있습니다. 잠시만 기다려 주세요.</div>}
+          {delayStage === 'hard' && <div className="muted small">응답이 지연 중입니다. 생성은 계속 진행 중입니다.</div>}
         </div>
       )}
       <div className="grid">

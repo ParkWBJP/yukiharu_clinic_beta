@@ -19,6 +19,7 @@ app.get('/health', (_req, res) => {
 
 app.post('/api/generate', async (req, res) => {
   try {
+    const tStart = Date.now();
     if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
 
     const form = req.body?.form || {};
@@ -171,17 +172,27 @@ No markdown, no comments, no extra fields, no location.`;
       } catch { return current; }
     }
 
+    const tOpenAIStart = Date.now();
     let upstream = await callUpstream();
     if (!Array.isArray(upstream.personas) || upstream.personas.length === 0) {
       upstream = await strictRetry();
     }
     const final = await enforceShape(upstream);
     if (!Array.isArray(final.personas) || final.personas.length === 0) {
+      console.warn('[generate] upstream_empty openaiMs=', Date.now() - tOpenAIStart, 'totalMs=', Date.now() - tStart);
       return res.status(502).json({ error: 'upstream_empty' });
     }
+    // Timing and payload headers for diagnostics
+    res.set('X-Timing-OpenAI-ms', String(Date.now() - tOpenAIStart));
+    res.set('X-Timing-Total-ms', String(Date.now() - tStart));
+    try {
+      res.set('X-Payload-Form-Bytes', String(JSON.stringify(form).length));
+      res.set('X-Payload-WebSummary-Bytes', String(JSON.stringify(webSummary).length));
+    } catch {}
     return res.json(final);
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).json({ error: 'timeout' });
+    console.error('[generate] error:', e?.message || e);
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
   }
 });
@@ -234,7 +245,9 @@ app.post('/api/summarize', async (req, res) => {
   try {
     const url = req.body?.url;
     if (!url) return res.status(400).json({ error: 'missing_url' });
+    const t0 = Date.now();
     const result = await summarizeUrl(url);
+    res.set('X-Timing-Total-ms', String(Date.now() - t0));
     return res.json(result);
   } catch (e) {
     const msg = String(e?.message || e);
@@ -247,7 +260,9 @@ app.get('/api/summarize', async (req, res) => {
   try {
     const url = String(req.query.url || '');
     if (!url) return res.status(400).json({ error: 'missing_url' });
+    const t0 = Date.now();
     const result = await summarizeUrl(url);
+    res.set('X-Timing-Total-ms', String(Date.now() - t0));
     return res.json(result);
   } catch (e) {
     const msg = String(e?.message || e);
