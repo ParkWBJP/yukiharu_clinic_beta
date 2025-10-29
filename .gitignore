@@ -10,8 +10,22 @@ dist/
 .env.*
 !.env.example
 
+# Secrets and key material
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.keystore
+*.jks
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
 # OS/Editor
 .DS_Store
 Thumbs.db
 *.log
-
