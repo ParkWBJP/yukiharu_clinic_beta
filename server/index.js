@@ -359,33 +359,33 @@ app.post('/api/generate/questions', async (req, res) => {
     const fallbackLocation = String(bodyIn.fallbackLocation || '').trim();
     const tone = String(bodyIn.tone || '실제 친근한 AI와 대화하듯');
 
-    const system = '너는 병원을 찾는 실제 사람(고객)이다. 친근한 AI에게 병원 추천을 부탁하는 대화 중이며, 아래 규칙을 엄격히 지켜 "질문 문장"만 만든다. 과장/광고/의학적 단정 표현은 절대 금지. 출력은 JSON ONLY.';
+    const system = '너는 병원을 찾는 실제 고객이다. 친근한 AI에게 병원 추천을 받고 싶어서 묻는 상황이다. 너무 자유롭게 말하지 말고, 자연스럽지만 문법적으로 매끄럽고 의미가 명확한 질문만 만든다. 출력은 JSON ONLY.';
     const rules = `입력
 persona: ${persona.age_range || persona.ageRange || ''} / ${persona.gender || ''}
 services: ${services.join(', ')}
 locationKeyword: ${locationKeyword}
 fallbackLocation: ${fallbackLocation}
+clinicIntro(선택): ${clinicIntro}
 tone: ${tone}
-clinicSummary(선택): ${String(bodyIn.summary || bodyIn.clinicSummary || '').slice(0,200)}
 
 목표
-- 병원 입력 폼의 services를 근거로, 해당 페르소나가 실제 AI에게 "추천을 부탁하는 자연스러운 질문" 3개 생성
+- 폼의 서비스/위치/연령·성별/(선택)한줄 소개를 참고하여, 실제 사용자가 AI에게 병원 추천을 부탁하는 질문 3개 생성
 
 생성 규칙
-1) 정확히 3문장 생성
-2) 세 문장 모두에 services 중 1~2개를 자연스럽게 포함(정보/추천 요청 중심, 과장 금지)
-3) 세 문장 중 정확히 1문장만 위치 포함(우선순위: locationKeyword → 없으면 fallbackLocation). 나머지 2문장은 위치 언급 금지
-4) 추천/탐색 맥락 유지(좋은 곳/후기/예약/상담 접근성 등). 예: "괜찮은 곳 있을까?", "후기 좋은 데 추천해줘"
-5) 연령대/성별 말투 반영(20~30대: 가볍고 친근 / 40~50대: 현실적·신뢰 / 60대+: 공손)
-6) 길이: 각 25~65자, 최대 2문장(짧은 도입+질문 허용)
-7) 중복/유사 문체 금지(문두/접속부/어미/어휘를 다양화: "혹시", "요즘", "괜찮을까", "알려줄래", "어디가 좋을지" 등 서로 다르게)
-8) 사이트 콘텐츠는 쓰지 말고, services만 근거로 작성
+1) 총 3개의 질문 생성
+2) 모든 질문에 services 중 1~2개 반드시 포함
+3) 세 질문 중 정확히 1개만 위치 포함(우선순위: locationKeyword → 없으면 fallbackLocation). 나머지 2개는 위치 언급 금지
+4) 각 질문은 "추천을 부탁하거나 좋은 병원을 묻는 톤"으로 끝난다 (예: "추천해줘", "알려줄래?", "어디가 괜찮을까?", "있을까?")
+5) 문장 길이 35~60자 (최대 2문장; 짧은 도입+질문 허용)
+7) 과도한 부사·감탄·중복 구조 금지(같은 접두어나 수식어 반복 X)
+8) 세 질문의 목적을 서로 다르게(위치 기반/후기/조건/신뢰/장비/케어 등) — 참고만, 장황한 설명 금지
+9) clinicIntro가 있으면 분위기·핵심 키워드를 문체/포커스에 살짝 반영(과장 금지)
 
 출력 형식
 - JSON ONLY: {"questions":["문장1","문장2","문장3"]}
 - 마크다운/설명/주석/코드펜스 금지
 
-Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1문장만 포함·톤/중복 다양화. 하나라도 어기면 스스로 재작성 후 최종 JSON만 출력`;
+Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 위치 포함·추천 톤 어미 준수. 미충족 시 자체 재작성 후 JSON만 출력`;
 
     const prompt = {
       model: OPENAI_MODEL,
@@ -480,9 +480,7 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
         return a===b ? a : `${a}·${b}`;
       };
       const polite = ['50대','60대','70대'].some(k => age.includes(k));
-      const opener = polite
-        ? ['실례지만','요즘','혹여','조심스레','문의드립니다,']
-        : ['혹시','요즘','솔직히','가볍게','근처에'];
+      // 고정된 문장 시작어는 사용하지 않고, 끝맺음만 톤에 맞게 분기
       const endAsk = polite
         ? [' 추천해 주실 수 있을까요?',' 어디가 좋을까요?',' 알려주실 수 있을까요?']
         : [' 추천해줄래?',' 어디가 괜찮아?',' 알려줘!'];
@@ -490,19 +488,17 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
       const locWord = locationKeyword || fallbackLocation || '';
       const lineWithLoc = () => {
         const s = pickSvc();
-        const o = opener[Math.floor(Math.random()*opener.length)];
         const f = flair[Math.floor(Math.random()*flair.length)];
         const e = endAsk[Math.floor(Math.random()*endAsk.length)];
-        const base = `${o} ${locWord} 근처에서 ${s} ${f} 하는 곳${e}`;
-        return base.length < 35 ? `${base.replace('?','')} 실제 후기가 괜찮은 곳이면 더 좋아.` : base;
+        const base = `${locWord} 근처에서 ${s} ${f} 해주는 병원${e}`;
+        return base.length < 35 ? `${base.replace('?','')} 후기 괜찮은 곳이면 더 좋아.` : base;
       };
       const lineGeneral = () => {
         const s2 = pickSvc2();
-        const o = opener[Math.floor(Math.random()*opener.length)];
         const f = flair[Math.floor(Math.random()*flair.length)];
         const e = endAsk[Math.floor(Math.random()*endAsk.length)];
-        let txt = `${o} ${s2} ${f} 하는 병원, 후기 좋은 곳${e}`;
-        if (txt.length < 35) txt = `${o} ${s2} 쪽으로 ${f} 잘하는 곳, 실제로 괜찮은 데${e}`;
+        let txt = `${s2} ${f} 해주는 병원, 후기 좋은 곳${e}`;
+        if (txt.length < 35) txt = `${s2} 잘하는 곳 중에서 후기 좋은 병원${e}`;
         return txt;
       };
       const qs = [lineWithLoc(), lineGeneral(), lineGeneral()]
@@ -578,15 +574,7 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
       }
       return s.trim();
     });
-    // Promote diversity in sentence openings if all identical
-    const _diverse = (arr) => {
-      const heads = arr.map(x => String(x).slice(0,2));
-      return !(heads[0] === heads[1] && heads[1] === heads[2]);
-    };
-    if (!_diverse(questions)) {
-      const prefixes = ['혹시', '요즘', '그런데', '근처에', '그리고'];
-      questions = questions.map((q, i) => i === 0 ? q : `${prefixes[i % prefixes.length]} ${q}`);
-    }
+    // 문두를 강제로 주입하지 않고, 추천 톤/길이/서비스/위치 규칙만 보장
     // If still not valid tone/length/diversity, synthesize deterministically
     if (!basicValid(questions)) {
       questions = synthesizeQuestions();
