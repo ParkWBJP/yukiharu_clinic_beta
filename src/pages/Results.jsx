@@ -213,7 +213,7 @@ export default function ResultsPage() {
       const payload = await r.json();
       const p = payload?.persona;
       if (!p) throw new Error('empty_persona');
-      const view = {
+      let view = {
         id: idx + 1,
         name: normalizeName(p.name, idx),
         gender: toKoGender(p.gender || p.gender_focus),
@@ -223,6 +223,32 @@ export default function ResultsPage() {
         budget: 120,
         questions: (p.questions || []).slice(0,3).map((q) => ({ text: typeof q === 'string' ? q : (q.text || String(q)) }))
       };
+      // Try to refine questions using new endpoint (best-effort)
+      try {
+        let form = null;
+        try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
+        const services = String(form?.serviceKeywords || '').split(',').map(s=>s.trim()).filter(Boolean);
+        const locationKeyword = String(form?.locationKeywords || '').trim();
+        const fallbackLocation = String(form?.district || '').trim();
+        const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
+          (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
+        const rQ = await fetch(`${API_BASE}/generate/questions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            persona: { age_range: view.ageRange, gender: view.gender },
+            services,
+            locationKeyword,
+            fallbackLocation,
+            tone: '실제 친근한 AI와 대화하듯'
+          })
+        });
+        if (rQ.ok) {
+          const qJ = await rQ.json();
+          if (Array.isArray(qJ?.questions) && qJ.questions.length === 3) {
+            view = { ...view, questions: qJ.questions.map(q => ({ text: String(q) })) };
+          }
+        }
+      } catch {}
       dispatchCreated(view.id, startedAt, finishedAt, latencyMs);
       return { ok: true, view, latencyMs };
     } catch (e) {
