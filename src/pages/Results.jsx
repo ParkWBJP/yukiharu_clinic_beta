@@ -238,6 +238,9 @@ export default function ResultsPage() {
         const fallbackLocation = String(form?.district || '').trim();
         const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
           (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
+        const clinicSummaryHint = (hints?.clinicSummary ?? '') || String(form?.summary || '');
+        // eslint-disable-next-line no-console
+        console.log('[questions] start', { id: idx + 1, services, locationKeyword, fallbackLocation });
         const rQ = await fetch(`${API_BASE}/generate/questions`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -245,8 +248,8 @@ export default function ResultsPage() {
             services,
             locationKeyword,
             fallbackLocation,
-            clinicSummary,
-            tone: '실제 친근한 AI와 대화하듯'
+            clinicIntro: clinicSummaryHint,
+            tone: '자연스럽고 현실적인 대화체, 문법적으로 매끄럽게'
           })
         });
         if (rQ.ok) {
@@ -255,6 +258,8 @@ export default function ResultsPage() {
             view = { ...view, questions: qJ.questions.map(q => ({ text: String(q) })) };
           }
         }
+        // eslint-disable-next-line no-console
+        console.log('[questions] done', { id: idx + 1, ok: rQ.ok });
       } catch {}
       dispatchCreated(view.id, startedAt, finishedAt, latencyMs);
       return { ok: true, view, latencyMs };

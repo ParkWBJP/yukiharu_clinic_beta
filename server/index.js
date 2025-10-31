@@ -511,7 +511,7 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
       const heads = qs.map(x => x.slice(0,2));
       if (heads[0] === heads[1]) qs[1] = `그리고 ${qs[1]}`;
       if (heads[0] === heads[2]) qs[2] = `또 ${qs[2]}`;
-      return qs.map(s => s.slice(0,70));
+      return qs.map(s => s.slice(0,60));
     }
 
     if (!basicValid(questions)) {
