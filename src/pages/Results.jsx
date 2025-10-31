@@ -539,7 +539,7 @@ export default function ResultsPage() {
         {(summary.status === 'error' || failed > 0) && (
           <button className="btn btn-primary" onClick={restartAll}>재시작</button>
         )}
-        <button className="btn btn-primary" onClick={()=>navigate('/persona')}>AI 검색 리포트 확인</button>
+        <button className="btn btn-primary" onClick={()=>navigate('/report-loading')}>AI 검색 리포트 확인</button>
       </div>
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

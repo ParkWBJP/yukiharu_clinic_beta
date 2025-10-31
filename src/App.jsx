@@ -5,6 +5,8 @@ import './i18n';
 import LanguageSelector from './components/LanguageSelector';
 import HospitalForm from './components/HospitalForm';
 import LoadingPage from './pages/Loading.jsx';
+import ReportLoading from './pages/ReportLoading.jsx';
+import ReportPage from './pages/Report.jsx';
 import ResultsPage from './pages/Results.jsx';
 
 function PersonaPage() {
@@ -47,6 +49,8 @@ export default function App() {
           <Route path="/" element={<HospitalForm />} />
           <Route path="/loading" element={<LoadingPage />} />
           <Route path="/results" element={<ResultsPage />} />
+          <Route path="/report-loading" element={<ReportLoading />} />
+          <Route path="/report" element={<ReportPage />} />
           <Route path="/persona" element={<PersonaPage />} />
         </Routes>
       </main>

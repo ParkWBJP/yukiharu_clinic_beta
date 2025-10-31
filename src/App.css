@@ -175,6 +175,20 @@ main { padding: 14px; }
 .toast { margin-top: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px; }
 .toast.error { background: #fff2f0; color: #a3342c; border: 1px solid #f6c9c4; }
 
+/* report loading */
+.report-loading-card { max-width: 680px; width: 100%; background:#fff; border:1px solid var(--border); border-radius:16px; padding:24px; box-shadow:0 10px 30px rgba(0,0,0,0.06); }
+[data-theme="dark"] .report-loading-card { background:#0f1418; }
+.rl-title { font-size:20px; font-weight:800; margin:0 0 12px 0; }
+.rl-steps { list-style:none; padding:0; margin:0 0 16px 0; }
+.rl-steps li { display:flex; align-items:center; gap:8px; padding:8px 0; color:var(--fg); }
+.rl-steps li .dot { width:10px; height:10px; border-radius:999px; background:var(--border); display:inline-block; }
+.rl-steps li.active .dot { background:#7ac143; }
+.rl-steps li.done .dot { background:#7ac143; box-shadow:0 0 0 2px rgba(122,193,67,0.2); }
+.rl-progress { position:relative; height:10px; background:rgba(0,0,0,0.06); border-radius:999px; overflow:hidden; }
+[data-theme="dark"] .rl-progress { background:rgba(255,255,255,0.08); }
+.rl-progress .bar { position:absolute; left:0; top:0; height:100%; background:#7ac143; border-radius:999px; transition:width .25s ease; }
+.rl-progress .pct { text-align:right; margin-top:6px; font-size:12px; color:var(--muted); }
+
 @media (max-width: 768px) {
   .loading-wrap { padding: 20px; }
   .loading-card { padding: 20px; }
@@ -315,8 +329,14 @@ main { padding: 14px; }
 .overview-title { font-weight:800; font-size: 20px; letter-spacing: -0.2px; }
 .overview-sub { color: var(--muted); font-size: 12px; }
 .ov-section { margin-top: 10px; font-weight:700; color: var(--fg-strong); }
-.ov-field { margin: 6px 0; line-height: 1.65; }
-.ov-field-name { display:inline-block; min-width: 84px; font-weight:600; color: var(--fg-strong); }
+/* Overview key-value rows */
+.ov-field { margin: 6px 0; line-height: 1.6; display:flex; align-items:flex-start; gap:8px; }
+.ov-field-name { flex: 0 0 auto; min-width: 56px; font-weight:700; color: var(--fg-strong); }
+.ov-field span { word-break: keep-all; }
+@media (max-width: 640px) {
+  .ov-field { gap:6px; }
+  .ov-field-name { min-width: 48px; }
+}
 .pill-wrap { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 4px 0; }
 .pill { padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,0.06); font-size: 12px; border: 1px solid var(--border); }
 [data-theme="dark"] .pill { background: rgba(255,255,255,0.08); }
