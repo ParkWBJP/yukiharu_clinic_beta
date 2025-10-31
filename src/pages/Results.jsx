@@ -184,7 +184,7 @@ export default function ResultsPage() {
     try { window.dispatchEvent(new CustomEvent('persona_failed', { detail: { id, errorCode, retryCount } })); } catch {}
   }
 
-  async function fetchOnePersona(idx, retry = 0) {
+  async function fetchOnePersona(idx, retry = 0, hints = {}) {
     const startedAt = Date.now();
     const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
       (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
@@ -202,7 +202,13 @@ export default function ResultsPage() {
       const r = await fetch(`${API_BASE}/generate/persona`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ form, index: idx }),
+        body: JSON.stringify({
+          form,
+          index: idx,
+          hintGender: hints.hintGender || '',
+          hintAgeRange: hints.hintAgeRange || '',
+          clinicSummary: hints.clinicSummary || ''
+        }),
         signal: controller.signal
       });
       clearTimers();
@@ -239,6 +245,7 @@ export default function ResultsPage() {
             services,
             locationKeyword,
             fallbackLocation,
+            clinicSummary,
             tone: '실제 친근한 AI와 대화하듯'
           })
         });
@@ -274,6 +281,20 @@ export default function ResultsPage() {
     let nextIndex = 0;
     let running = 0;
     let cancelled = false;
+
+    // Build gender plan (rounded ratio) and age pool from form
+    let form = null;
+    try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
+    const femaleRatio = Number(form?.femaleRatio ?? 50);
+    const femaleCount = Math.min(TOTAL, Math.max(0, Math.round((femaleRatio/100) * TOTAL)));
+    const maleCount = TOTAL - femaleCount;
+    const genderPlan = Array(femaleCount).fill('여성').concat(Array(maleCount).fill('남성'));
+    // Shuffle for variation
+    for (let i = genderPlan.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [genderPlan[i], genderPlan[j]] = [genderPlan[j], genderPlan[i]]; }
+    const ageMap = [ ['teens','10대'], ['twenties','20대'], ['thirties','30대'], ['forties','40대'], ['fifties','50대'], ['sixties','60대'], ['seventiesPlus','70대 이상'] ];
+    const chosenAges = ageMap.filter(([k]) => form?.ages?.[k]).map(([,v]) => v);
+    const agePool = chosenAges.length ? chosenAges : ['20대','30대','40대'];
+    const clinicSummary = String(form?.summary || '');
     const maybeUpdate = () => {
       const doneCount = latencies.length + failed;
       const avg = latencies.length ? (latencies.reduce((a,b)=>a+b,0) / latencies.length) : 0;
@@ -285,7 +306,7 @@ export default function ResultsPage() {
       while (running < CONCURRENCY && nextIndex < TOTAL) {
         const idx = nextIndex++;
         running++;
-        fetchOnePersona(idx).then((res) => {
+        fetchOnePersona(idx, 0, { hintGender: genderPlan[idx] || '', hintAgeRange: agePool[Math.floor(Math.random()*agePool.length)], clinicSummary }).then((res) => {
           if (genIdRef.current !== myGen) return;
           running--;
           setPending((n) => n - 1);

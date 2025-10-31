@@ -210,9 +210,12 @@ app.post('/api/generate/persona', async (req, res) => {
     const form = req.body?.form || {};
     const webSummary = req.body?.webSummary || {};
     const index = Number.isFinite(req.body?.index) ? Number(req.body.index) : null;
+    const hintGender = (req.body?.hintGender || '').trim(); // "여성" | "남성" | ''
+    const hintAgeRange = (req.body?.hintAgeRange || '').trim(); // e.g., "20대"
+    const clinicSummary = (req.body?.clinicSummary || '').trim();
 
     const system = `You are the assistant for the hospital SEO service "YukiHaru AI".
-Return JSON ONLY, no markdown. Generate exactly ONE persona with 3 natural search-style Korean questions.
+Return JSON ONLY, no markdown. Generate exactly ONE persona tailored from hints.
 
 Output format (JSON ONLY):
 { "persona": { "name":"...", "age_range":"20대", "gender":"여성|남성", "interests":["..."], "goal":"...", "questions":["q1","q2","q3"] } }
@@ -221,13 +224,15 @@ Rules:
 - Use webSummary when available; otherwise use formData only.
 - Focus on formData.serviceKeywords; write all text in Korean.
 - Do NOT include a location field.
-- questions must be EXACTLY 3 Korean strings.`;
+- questions must be EXACTLY 3 Korean strings.
+- If hintGender is given, gender MUST be that value exactly (여성 or 남성).
+- If hintAgeRange is given, age_range MUST be that value exactly (one of 10대/20대/30대/40대/50대/60대/70대 이상).`;
 
     const body = {
       model: OPENAI_MODEL,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}${index !== null ? `\nindex:${index}` : ''}` }
+        { role: 'user', content: `formData: ${JSON.stringify(form)}\nwebSummary: ${JSON.stringify(webSummary)}${index !== null ? `\nindex:${index}` : ''}${hintGender ? `\nhintGender:${hintGender}` : ''}${hintAgeRange ? `\nhintAgeRange:${hintAgeRange}` : ''}${clinicSummary ? `\nclinicSummary:${clinicSummary}` : ''}` }
       ],
       temperature: 0.5,
       response_format: { type: 'json_object' }
@@ -361,6 +366,7 @@ services: ${services.join(', ')}
 locationKeyword: ${locationKeyword}
 fallbackLocation: ${fallbackLocation}
 tone: ${tone}
+clinicSummary(선택): ${String(bodyIn.summary || bodyIn.clinicSummary || '').slice(0,200)}
 
 목표
 - 병원 입력 폼의 services를 근거로, 해당 페르소나가 실제 AI에게 "추천을 부탁하는 자연스러운 질문" 3개 생성
@@ -372,7 +378,7 @@ tone: ${tone}
 4) 추천/탐색 맥락 유지(좋은 곳/후기/예약/상담 접근성 등). 예: "괜찮은 곳 있을까?", "후기 좋은 데 추천해줘"
 5) 연령대/성별 말투 반영(20~30대: 가볍고 친근 / 40~50대: 현실적·신뢰 / 60대+: 공손)
 6) 길이: 각 25~65자, 최대 2문장(짧은 도입+질문 허용)
-7) 중복/유사 문체 금지(문두/접속부/어휘 다양화)
+7) 중복/유사 문체 금지(문두/접속부/어미/어휘를 다양화: "혹시", "요즘", "괜찮을까", "알려줄래", "어디가 좋을지" 등 서로 다르게)
 8) 사이트 콘텐츠는 쓰지 말고, services만 근거로 작성
 
 출력 형식
