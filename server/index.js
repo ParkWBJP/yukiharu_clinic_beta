@@ -275,6 +275,14 @@ Rules:
       return res.status(502).json({ error: 'upstream_empty' });
     }
 
+    // Enforce hints strictly if provided
+    if (hintGender && typeof persona === 'object') {
+      persona.gender = hintGender;
+    }
+    if (hintAgeRange && typeof persona === 'object') {
+      persona.age_range = hintAgeRange;
+    }
+
     res.set('X-Timing-OpenAI-ms', String(Date.now() - tOpenAIStart));
     res.set('X-Timing-Total-ms', String(Date.now() - tStart));
     try {
@@ -441,12 +449,29 @@ Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 
       return services.some(s => s && String(q).includes(s));
     }
     function hasRecLexicon(q) {
-      const s = String(q);
-      return ['추천', '괜찮', '후기', '상담', '어디가', '알려줘', '알려줄래', '알려주세요', '찾아', '소개', '골라'].some(k => s.includes(k));
+      const s = String(q).trim();
+      const pats = [
+        /추천(해|해줘| 부탁| 가능|받)/,
+        /(알려줄래|알려줘|알려주.*수)/,
+        /어디(?:가|서).*(괜찮|좋|나을)/,
+        /후기.*좋/,
+        /괜찮은?\s*곳/,
+        /있(?:을까|나요|을지)/
+      ];
+      return pats.some(r => r.test(s));
     }
     function violatesFAQ(q) {
-      const s = String(q);
-      return ['얼마나', '얼마', '기간', '부작용', '보험', '안전', '진행되', '비용', '가격'].some(k => s.includes(k));
+      const s = String(q).trim();
+      // 허용: 추천 맥락에서의 비용/가격/보험 문의
+      const allowRec = /(추천|알려|어디|있(?:을까|나요)|후기.*좋|괜찮|좋은\s*곳)/;
+      if (/(보험|비용|가격)/.test(s) && allowRec.test(s)) return false;
+      // 금지: 전형적인 FAQ 어투
+      const faq = /(얼마나\s*걸리|어떻게\s*진행|부작용|안전(?:한가요)?)/;
+      return faq.test(s);
+    }
+    function endsWithRec(q) {
+      const s = String(q).trim();
+      return /\?$/.test(s) || ['추천해줘','알려줄래?','알려줘','어디가 괜찮을까?','있을까?'].some(k => s.endsWith(k));
     }
     function diverseStarts(qs) {
       const heads = qs.map(q => String(q).slice(0, 2));
@@ -460,12 +485,11 @@ Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 
       if (qs.length !== 3) return false;
       const lenOk = qs.every(q => {
         const L = String(q).trim().length;
-        return L >= 35 && L <= 70; // 길이 상향(너무 짧은 문장 방지)
+        return L >= 35 && L <= 60;
       });
       const svcOk = qs.every(q => containsService(q));
-      const toneOk = qs.some(hasRecLexicon) && qs.every(q => !violatesFAQ(q));
-      const divOk = diverseStarts(qs) && diverseEndings(qs);
-      return lenOk && svcOk && includesLocationOnce(qs) && toneOk && divOk;
+      const toneOk = qs.some(hasRecLexicon) && qs.every(q => !violatesFAQ(q) && endsWithRec(q));
+      return lenOk && svcOk && includesLocationOnce(qs) && toneOk;
     }
 
     // Deterministic synthesis as a last resort to guarantee tone/length/diversity
@@ -579,8 +603,8 @@ Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 
     if (!basicValid(questions)) {
       questions = synthesizeQuestions();
     }
-    // Final trim to <= 70 chars (best effort)
-    questions = questions.map((q) => String(q).trim().slice(0, 70));
+    // Final trim to <= 60 chars (best effort)
+    questions = questions.map((q) => String(q).trim().slice(0, 60));
 
     return res.json({ questions });
   } catch (e) {

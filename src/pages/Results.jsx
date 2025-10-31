@@ -140,12 +140,35 @@ export default function ResultsPage() {
   const { state } = useLocation();
   const navigate = useNavigate();
   const [items, setItems] = React.useState([]);
-  function normalizeName(name, i) {
-    const pool = ['김서연','이수민','박지훈','최유진','정현우','한소희','오지민','유다인','서지우','강민서'];
-    if (!name) return pool[i % pool.length];
-    const ascii = /^[\x00-\x7F]+$/.test(String(name));
-    if (ascii || /female|male|young/i.test(String(name))) return pool[i % pool.length];
-    return String(name);
+  // Unique, gender-appropriate Korean names
+  const usedNamesRef = React.useRef(new Set());
+  const nextIndexRef = React.useRef({ female: 0, male: 0 });
+  const femaleNames = ['김서연','이지은','박하은','최서윤','정가은','한소민','유다연','오서윤','장하린','강민서','윤서현','배가온','신하율','서지유','권민지','차다인','문소이','임하윤','조서연','노지아'];
+  const maleNames = ['김민준','이도윤','박서준','최현우','정준호','한지호','오세진','유건우','장민재','강도현','윤서진','배지후','신하준','서우진','권시우','차연우','문윤호','임지완','조현서','노태윤'];
+  function uniqueNameForGender(gender) {
+    const key = String(gender).includes('여') ? 'female' : 'male';
+    const list = key === 'female' ? femaleNames : maleNames;
+    let idx = nextIndexRef.current[key] || 0;
+    for (let k = 0; k < list.length; k++) {
+      const candidate = list[(idx + k) % list.length];
+      if (!usedNamesRef.current.has(candidate)) {
+        usedNamesRef.current.add(candidate);
+        nextIndexRef.current[key] = (idx + k + 1) % list.length;
+        return candidate;
+      }
+    }
+    const fallback = list[idx % list.length] + (usedNamesRef.current.size + 1);
+    usedNamesRef.current.add(fallback);
+    nextIndexRef.current[key] = (idx + 1) % list.length;
+    return fallback;
+  }
+  function normalizeName(name, i, gender) {
+    const nm = String(name || '').trim();
+    const ascii = /^[\x00-\x7F]+$/.test(nm);
+    if (!nm || ascii || /female|male|young/i.test(nm)) return uniqueNameForGender(gender);
+    if (usedNamesRef.current.has(nm)) return uniqueNameForGender(gender);
+    usedNamesRef.current.add(nm);
+    return nm;
   }
   function toKoGender(g) {
     const s = String(g || "").toLowerCase();
@@ -221,8 +244,8 @@ export default function ResultsPage() {
       if (!p) throw new Error('empty_persona');
       let view = {
         id: idx + 1,
-        name: normalizeName(p.name, idx),
-        gender: toKoGender(p.gender || p.gender_focus),
+        gender: toKoGender((p.gender || p.gender_focus || hints.hintGender)),
+        name: normalizeName(p.name, idx, toKoGender((p.gender || p.gender_focus || hints.hintGender))),
         ageRange: toKoAge(p.age_range || '20대'),
         interests: p.interests || [],
         purposes: [],
