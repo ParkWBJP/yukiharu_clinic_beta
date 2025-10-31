@@ -393,7 +393,9 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
         { role: 'system', content: system },
         { role: 'user', content: rules }
       ],
-      temperature: 0.5,
+      temperature: 0.75,
+      presence_penalty: 0.6,
+      frequency_penalty: 0.3,
       response_format: { type: 'json_object' }
     };
 
@@ -438,6 +440,22 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
     function containsService(q) {
       return services.some(s => s && String(q).includes(s));
     }
+    function hasRecLexicon(q) {
+      const s = String(q);
+      return ['추천', '괜찮', '후기', '상담', '어디가', '알려줘', '알려줄래', '알려주세요', '찾아', '소개', '골라'].some(k => s.includes(k));
+    }
+    function violatesFAQ(q) {
+      const s = String(q);
+      return ['얼마나', '얼마', '기간', '부작용', '보험', '안전', '진행되', '비용', '가격'].some(k => s.includes(k));
+    }
+    function diverseStarts(qs) {
+      const heads = qs.map(q => String(q).slice(0, 2));
+      return !(heads[0] === heads[1] && heads[1] === heads[2]);
+    }
+    function diverseEndings(qs) {
+      const tails = qs.map(q => String(q).slice(-2));
+      return !(tails[0] === tails[1] && tails[1] === tails[2]);
+    }
     function basicValid(qs) {
       if (qs.length !== 3) return false;
       const lenOk = qs.every(q => {
@@ -445,7 +463,9 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
         return L >= 25 && L <= 65;
       });
       const svcOk = qs.every(q => containsService(q));
-      return lenOk && svcOk && includesLocationOnce(qs);
+      const toneOk = qs.some(hasRecLexicon) && qs.every(q => !violatesFAQ(q));
+      const divOk = diverseStarts(qs) && diverseEndings(qs);
+      return lenOk && svcOk && includesLocationOnce(qs) && toneOk && divOk;
     }
 
     if (!basicValid(questions)) {
@@ -454,9 +474,11 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
         model: OPENAI_MODEL,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: rules + '\n\n방금 출력은 조건을 일부 위반했어. 길이/서비스 포함/위치 1문장만 포함/중복 최소화를 모두 만족하도록 JSON ONLY로 다시 생성해.' }
+          { role: 'user', content: rules + '\n\n방금 출력은 조건을 일부 위반했어. FAQ 어조(얼마나/부작용/보험/비용/안전 등) 금지, 추천 톤(추천/괜찮/후기/어디가/상담/알려줘 등) 포함, 문두/어미 다양화까지 만족하도록 JSON ONLY로 다시 생성해.' }
         ],
-        temperature: 0.4,
+        temperature: 0.65,
+        presence_penalty: 0.6,
+        frequency_penalty: 0.3,
         response_format: { type: 'json_object' }
       };
       const r2 = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
@@ -497,6 +519,27 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
     // Ensure every question includes at least one service keyword
     if (services.length) {
       questions = questions.map((q) => (containsService(q) ? q : `${services[0]} 관련해서 ${String(q).replaceAll('  ',' ').trim()}`));
+    }
+    // Enforce recommendation tone and remove FAQ-ish wording as last resort
+    questions = questions.map((q, i) => {
+      let s = String(q);
+      ['얼마나','얼마','기간','부작용','보험','안전','진행되','비용','가격'].forEach(b => { s = s.replaceAll(b, ''); });
+      if (!hasRecLexicon(s)) {
+        const recTail = i % 2 === 0 ? ' 추천해줄래?' : ' 어디가 좋을지 알려줄 수 있어?';
+        const svc = services[0] || '';
+        s = (svc ? `${svc} 관련해서 ` : '') + s.replace(/\s+/g,' ').trim();
+        if (!/[?.!]$/.test(s)) s += recTail;
+      }
+      return s.trim();
+    });
+    // Promote diversity in sentence openings if all identical
+    const _diverse = (arr) => {
+      const heads = arr.map(x => String(x).slice(0,2));
+      return !(heads[0] === heads[1] && heads[1] === heads[2]);
+    };
+    if (!_diverse(questions)) {
+      const prefixes = ['혹시', '요즘', '그런데', '근처에', '그리고'];
+      questions = questions.map((q, i) => i === 0 ? q : `${prefixes[i % prefixes.length]} ${q}`);
     }
     // Trim overly long questions to <= 65 chars (best effort)
     questions = questions.map((q) => String(q).trim().slice(0, 65));
