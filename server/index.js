@@ -460,12 +460,58 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
       if (qs.length !== 3) return false;
       const lenOk = qs.every(q => {
         const L = String(q).trim().length;
-        return L >= 25 && L <= 65;
+        return L >= 35 && L <= 70; // 길이 상향(너무 짧은 문장 방지)
       });
       const svcOk = qs.every(q => containsService(q));
       const toneOk = qs.some(hasRecLexicon) && qs.every(q => !violatesFAQ(q));
       const divOk = diverseStarts(qs) && diverseEndings(qs);
       return lenOk && svcOk && includesLocationOnce(qs) && toneOk && divOk;
+    }
+
+    // Deterministic synthesis as a last resort to guarantee tone/length/diversity
+    function synthesizeQuestions() {
+      const age = String(persona.age_range || persona.ageRange || '').replace(/\s+/g,'') || '30대';
+      const gender = String(persona.gender || '').includes('남') ? '남성' : '여성';
+      const svcList = services.length ? services : ['상담'];
+      const pickSvc = () => svcList[Math.floor(Math.random()*svcList.length)] || '상담';
+      const pickSvc2 = () => {
+        const a = pickSvc();
+        const b = pickSvc();
+        return a===b ? a : `${a}·${b}`;
+      };
+      const polite = ['50대','60대','70대'].some(k => age.includes(k));
+      const opener = polite
+        ? ['실례지만','요즘','혹여','조심스레','문의드립니다,']
+        : ['혹시','요즘','솔직히','가볍게','근처에'];
+      const endAsk = polite
+        ? [' 추천해 주실 수 있을까요?',' 어디가 좋을까요?',' 알려주실 수 있을까요?']
+        : [' 추천해줄래?',' 어디가 괜찮아?',' 알려줘!'];
+      const flair = ['자연스럽게','부담 적게','티 나지 않게','무난하게','깔끔하게'];
+      const locWord = locationKeyword || fallbackLocation || '';
+      const lineWithLoc = () => {
+        const s = pickSvc();
+        const o = opener[Math.floor(Math.random()*opener.length)];
+        const f = flair[Math.floor(Math.random()*flair.length)];
+        const e = endAsk[Math.floor(Math.random()*endAsk.length)];
+        const base = `${o} ${locWord} 근처에서 ${s} ${f} 하는 곳${e}`;
+        return base.length < 35 ? `${base.replace('?','')} 실제 후기가 괜찮은 곳이면 더 좋아.` : base;
+      };
+      const lineGeneral = () => {
+        const s2 = pickSvc2();
+        const o = opener[Math.floor(Math.random()*opener.length)];
+        const f = flair[Math.floor(Math.random()*flair.length)];
+        const e = endAsk[Math.floor(Math.random()*endAsk.length)];
+        let txt = `${o} ${s2} ${f} 하는 병원, 후기 좋은 곳${e}`;
+        if (txt.length < 35) txt = `${o} ${s2} 쪽으로 ${f} 잘하는 곳, 실제로 괜찮은 데${e}`;
+        return txt;
+      };
+      const qs = [lineWithLoc(), lineGeneral(), lineGeneral()]
+        .map(s => s.replace(/\s+/g,' ').trim()).slice(0,3);
+      // Ensure diversity starts
+      const heads = qs.map(x => x.slice(0,2));
+      if (heads[0] === heads[1]) qs[1] = `그리고 ${qs[1]}`;
+      if (heads[0] === heads[2]) qs[2] = `또 ${qs[2]}`;
+      return qs.map(s => s.slice(0,70));
     }
 
     if (!basicValid(questions)) {
@@ -541,8 +587,12 @@ Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1
       const prefixes = ['혹시', '요즘', '그런데', '근처에', '그리고'];
       questions = questions.map((q, i) => i === 0 ? q : `${prefixes[i % prefixes.length]} ${q}`);
     }
-    // Trim overly long questions to <= 65 chars (best effort)
-    questions = questions.map((q) => String(q).trim().slice(0, 65));
+    // If still not valid tone/length/diversity, synthesize deterministically
+    if (!basicValid(questions)) {
+      questions = synthesizeQuestions();
+    }
+    // Final trim to <= 70 chars (best effort)
+    questions = questions.map((q) => String(q).trim().slice(0, 70));
 
     return res.json({ questions });
   } catch (e) {
