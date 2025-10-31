@@ -1,5 +1,6 @@
 ﻿import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import regions from '../data/regions';
 function useIO(callback) {
   const cbRef = React.useRef(callback);
   React.useEffect(() => { cbRef.current = callback; }, [callback]);
@@ -60,7 +61,7 @@ function PersonaCard({ data, onChange }) {
       {/* persona loading indicator is rendered in ResultsPage, not here */}
       <div className="pc-body">
         <div className="pc-row">
-          <label>방문 목적</label>
+          <label>검색 목적</label>
           <div className="option-box">
             <div className="checks">
               {['상담','시술','가격비교','후기확인','예약','기타'].map(p => (
@@ -196,6 +197,8 @@ export default function ResultsPage() {
   const [toast, setToast] = React.useState(null);
   const genIdRef = React.useRef(0);
   const activeControllers = React.useRef(new Set());
+  const LS_ITEMS = 'yh_results_items';
+  const LS_OVERVIEW = 'yh_overview';
 
   function dispatchProgress(doneCount, totalCount, avgMs) {
     try { window.dispatchEvent(new CustomEvent('progress_updated', { detail: { doneCount, totalCount, avgLatencyMs: Math.round(avgMs || 0) } })); } catch {}
@@ -256,9 +259,25 @@ export default function ResultsPage() {
       try {
         let form = null;
         try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
-        const services = String(form?.serviceKeywords || '').split(',').map(s=>s.trim()).filter(Boolean);
-        const locationKeyword = String(form?.locationKeywords || '').trim();
-        const fallbackLocation = String(form?.district || '').trim();
+        // Services: split by comma or whitespace, unique tokens
+        const services = Array.from(new Set(String(form?.serviceKeywords || '')
+          .split(/[\s,]+/)
+          .map(s=>s.trim())
+          .filter(Boolean)));
+        // Split location keywords by comma or whitespace, pick one randomly per request
+        const locStr = String(form?.locationKeywords || '').trim();
+        const locTokens = Array.from(new Set(locStr.split(/[\s,]+/).map(t => t.trim()).filter(Boolean)));
+        const locationKeyword = locTokens.length ? locTokens[Math.floor(Math.random()*locTokens.length)] : '';
+        // Map district ID to Korean label for fallback location
+        const cityId = form?.city; const distId = form?.district;
+        let fallbackLocation = '';
+        try {
+          const r = regions.find(c => c.id === cityId);
+          if (r) {
+            const d = r.districts.find(x => x[0] === distId);
+            if (d) fallbackLocation = String(d[1] || '').trim();
+          }
+        } catch {}
         const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
           (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
         const clinicSummaryHint = (hints?.clinicSummary ?? '') || String(form?.summary || '');
@@ -396,6 +415,14 @@ export default function ResultsPage() {
     const url = form?.website;
     if (form?.hospitalName) setHospitalName(form.hospitalName);
     if (!url) { setSummary({ status: 'error', lines: ['병원 URL이 없어 요약할 수 없습니다.'] }); return; }
+    // Try cached overview first
+    try {
+      const cached = JSON.parse(localStorage.getItem(LS_OVERVIEW) || 'null');
+      if (cached && Array.isArray(cached.lines)) {
+        setSummary({ status: 'done', lines: cached.lines });
+        return;
+      }
+    } catch {}
     const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
       (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
     setSummary({ status: 'loading', lines: [] });
@@ -411,14 +438,26 @@ export default function ResultsPage() {
   React.useEffect(() => {
     if (bootOnceRef.current) return; // run once on first mount
     bootOnceRef.current = true;
-    // Start streaming generation immediately
-    startStreaming();
+    // Load cached personas if present; otherwise start streaming
+    try {
+      const cached = JSON.parse(localStorage.getItem(LS_ITEMS) || 'null');
+      if (Array.isArray(cached) && cached.length) {
+        setItems(cached);
+        setVisibleCount(cached.length);
+      } else {
+        startStreaming();
+      }
+    } catch { startStreaming(); }
     // Fetch overview
     fetchOverview();
   }, [startStreaming, fetchOverview]);
   // remove bulk regenerate; using streaming instead
   const applyChange = (index, next) => {
-    setItems((arr) => arr.map((it, i) => i === index ? next : it));
+    setItems((arr) => {
+      const updated = arr.map((it, i) => i === index ? next : it);
+      try { localStorage.setItem(LS_ITEMS, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
   };
   const filtered = items; // stream: show immediately
   const toCSV = () => {
@@ -439,21 +478,39 @@ export default function ResultsPage() {
   
   return (
     <div className="container results-container">
-      <div className="summary-card">
-        <div className="summary-title2">{hospitalName ? `${hospitalName} AI Over view` : 'AI Over view'}</div>
-        <div className="summary-title">AI 병원 요약 정보</div>
+      <div className="overview-card">
+        <div className="overview-header">
+          <div className="overview-title">{hospitalName ? `${hospitalName} AI Overview` : 'AI Overview'}</div>
+          <div className="overview-sub">AI Overview</div>
+        </div>
         <div className="summary-note muted small">
           {done}/{TOTAL} 생성됨 · 평균 {Math.round(avgLatency)}ms {done < TOTAL ? <>· ETA ~ {Math.max(0, Math.round((TOTAL - done) * (avgLatency || 1000) / CONCURRENCY / 1000))}s</> : null}
         </div>
         {summary.status === 'loading' ? (
-          <div className="summary-loading"><span className="spinner" /> 요약 중</div>
+          <div className="summary-loading"><span className="spinner" /> 오버뷰 생성 중</div>
         ) : (
-          <>
-            <ul className="summary-list">
-              {summary.lines.map((l, i) => (<li key={i}>{l}</li>))}
-            </ul>
+          <div className="overview-body">
+            {summary.lines.map((raw, i) => {
+              const l = String(raw || '');
+              if (/^\s*$/.test(l)) return <div key={i} className="ov-divider" />;
+              if (l.startsWith('🧠') || l.startsWith('🔍') || l.startsWith('🚀')) return <div key={i} className="ov-section">{l}</div>;
+              if (l.startsWith('주요 키워드')) {
+                const tags = l.replace('주요 키워드 :','').trim().split(/\s+/).filter(t=>t.startsWith('#'));
+                return <div key={i} className="pill-wrap">{tags.map((t,idx)=>(<span className="pill" key={idx}>{t.replace(/^#/, '')}</span>))}</div>;
+              }
+              const m = l.match(/^([^:：]+)\s*[:：]\s*(.*)$/);
+              if (m) {
+                return (
+                  <div className="ov-field" key={i}>
+                    <span className="ov-field-name">{m[1]}</span>
+                    <span>{m[2]}</span>
+                  </div>
+                );
+              }
+              return <div key={i} className="ov-field">{l}</div>;
+            })}
             <div className="summary-note muted small">This overview is generated from your website content.</div>
-          </>
+          </div>
         )}
       </div>
       {items.length === 0 && (

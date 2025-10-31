@@ -305,19 +305,62 @@ async function summarizeUrl(target) {
     const r = await fetch(url, { headers: { 'User-Agent': 'YukiHaruBot/1.0 (+http://localhost)' }, redirect: 'follow' });
     html = await r.text();
   } catch {}
-  const text = (html || '')
+  // Lightweight extraction for meta/title/headings/alts
+  const safe = String(html || '');
+  const title = (safe.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [,''])[1].replace(/\s+/g,' ').trim().slice(0,140);
+  const metaDesc = (safe.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["'][^>]*>/i) ||
+                    safe.match(/<meta[^>]+content=["']([^"']*)["'][^>]*name=["']description["'][^>]*>/i) || [,''])[1]
+                    .replace(/\s+/g,' ').trim().slice(0,200);
+  const hTags = Array.from(safe.matchAll(/<(h1|h2|h3)[^>]*>([\s\S]*?)<\/\1>/gi)).map(m => m[2].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,12);
+  const alts = Array.from(safe.matchAll(/\salt=["']([^"']+)["']/gi)).map(m => m[1]).filter(Boolean).slice(0,20);
+  const bodyText = safe
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
-    .slice(0, 6000);
+    .slice(0, 8000);
 
-  const prompt = 'Return JSON ONLY as {"lines":["..."]} with 3-5 short Korean lines describing key services, target audience, keywords, and tone. Each line <= 80 Korean characters.';
+  // New, richer overview prompt per requested format
+  const prompt = `JSON ONLY -> {"lines":["..."]}
+입력 요약
+- title: ${title}
+- meta_description: ${metaDesc}
+- h1~h3: ${JSON.stringify(hTags)}
+- image_alts: ${JSON.stringify(alts)}
+- text_sample: ${bodyText.slice(0,600)}
+
+[작업 목적]
+입력된 병원 웹사이트의 HTML을 분석하여, AI가 해당 병원을 어떻게 인식하는지와 AIO(인공지능 검색최적화) 개선 방향을 종합적으로 제시하는 ‘병원 오버뷰(AI Overview)’를 생성한다.
+
+[작업 규칙]
+1) meta/title/description/h1~h3/주요 텍스트/이미지 alt를 근거로 자연어 요약
+2) AI가 인식한 인상/키워드, HTML 구조상의 강점/약점 정리
+3) 지정된 출력 포맷을 정확히 따를 것(각 항목 최소 글자 수)
+4) 문체는 분석적이되 자연스럽게 AIO 서비스 필요성을 암시
+5) 병원명(가능하면 title/h1에서 추출)을 2회 이상 언급
+
+[출력 포맷]
+줄 배열(JSON lines)로 아래 항목을 순서대로 작성한다. 각 줄은 순수 텍스트.
+1) "🧠 AI가 인식하는 브랜드 인상 및 콘텐츠 톤"
+2) "핵심 인상 : (100자 이상 설명)"
+3) "주요 키워드 : #키워드1 #키워드2 #키워드3 #키워드4 #키워드5 #키워드6 #키워드7 #키워드8 #키워드9 #키워드10"
+4) ""
+5) "🔍 HTML 구조 및 AI 최적화 분석"
+6) "장점 : (70자 이상)"
+7) "단점 : (100자 이상)"
+8) ""
+9) "🚀 AI 검색최적화 제안"
+10) "(150자 이상, (150자 이상, 현재 사이트의 AI 인식 상태를 객관적으로 설명하고, AI 기반 검색 환경에서 개선 여지가 있는 부분을 구체적으로 제시하되,마지막에는 AI 최적화의 필요성을 자연스럽게 환기시키는 형태로 작성. 
+
+제약
+- JSON ONLY로 반환({"lines":[...]})
+- 마크다운/주석/코드펜스 금지
+- 병원명은 title/h1에서 추정하여 한국어로 표기, 2회 이상 포함`;
   const body = {
     model: OPENAI_MODEL,
     messages: [
       { role: 'system', content: prompt },
-      { role: 'user', content: `URL: ${url}\nTEXT: ${text}` }
+      { role: 'user', content: `URL: ${url}` }
     ],
     temperature: 0.3,
     response_format: { type: 'json_object' }
@@ -365,7 +408,8 @@ app.post('/api/generate/questions', async (req, res) => {
     const services = Array.isArray(bodyIn.services) ? bodyIn.services : String(bodyIn.services || '').split(',').map(s=>s.trim()).filter(Boolean);
     const locationKeyword = String(bodyIn.locationKeyword || '').trim();
     const fallbackLocation = String(bodyIn.fallbackLocation || '').trim();
-    const tone = String(bodyIn.tone || '실제 친근한 AI와 대화하듯');
+    const clinicIntro = String(bodyIn.clinicIntro || bodyIn.summary || bodyIn.clinicSummary || '').trim();
+    const tone = String(bodyIn.tone || '자연스럽고 현실적인 대화체, 문법적으로 매끄럽게');
 
     const system = '너는 병원을 찾는 실제 고객이다. 친근한 AI에게 병원 추천을 받고 싶어서 묻는 상황이다. 너무 자유롭게 말하지 말고, 자연스럽지만 문법적으로 매끄럽고 의미가 명확한 질문만 만든다. 출력은 JSON ONLY.';
     const rules = `입력
@@ -508,29 +552,55 @@ Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 
       const endAsk = polite
         ? [' 추천해 주실 수 있을까요?',' 어디가 좋을까요?',' 알려주실 수 있을까요?']
         : [' 추천해줄래?',' 어디가 괜찮아?',' 알려줘!'];
-      const flair = ['자연스럽게','부담 적게','티 나지 않게','무난하게','깔끔하게'];
+      const aspects = [
+        '자연스럽게 하는',
+        '상담이 편한',
+        '회복이 빠른',
+        '가격이 합리적인',
+        '실비 보험 청구 가능한',
+        '장비가 최신인',
+        '저렴한',
+        '고급스러운',
+        '친절한',
+        '재수술잘하는',
+        '후기가 좋은',
+        '시술경험 많은',
+        '연예인이 많이 찾는',
+        '신뢰할 수 있는',
+        '전문적인',
+        '맞춤상담',
+        '티가 덜나게 하는'
+      ];
       const locWord = locationKeyword || fallbackLocation || '';
+      const skillAdj = ['잘하는','전문으로 하는','경험 많은','유명한','평이 좋은','케이스가 많은'];
       const lineWithLoc = () => {
         const s = pickSvc();
-        const f = flair[Math.floor(Math.random()*flair.length)];
         const e = endAsk[Math.floor(Math.random()*endAsk.length)];
-        const base = `${locWord} 근처에서 ${s} ${f} 해주는 병원${e}`;
-        return base.length < 35 ? `${base.replace('?','')} 후기 괜찮은 곳이면 더 좋아.` : base;
+        const adj = skillAdj[Math.floor(Math.random()*skillAdj.length)];
+        const locTemplates = [
+          `${locWord}에서 ${s} ${adj} 병원${e}`,
+          `${locWord} ${s} ${adj} 병원${e}`,
+          `${locWord} 쪽에 ${s} 상담이 편한 병원${e}`,
+          `${locWord} ${s} 자연스럽게 하는 곳${e}`
+        ];
+        let txt = locTemplates[Math.floor(Math.random()*locTemplates.length)];
+        if (txt.length < 35) txt = `${locWord}에서 ${s} ${adj} 병원 ${e.trim()}`;
+        return txt;
       };
       const lineGeneral = () => {
         const s2 = pickSvc2();
-        const f = flair[Math.floor(Math.random()*flair.length)];
         const e = endAsk[Math.floor(Math.random()*endAsk.length)];
-        let txt = `${s2} ${f} 해주는 병원, 후기 좋은 곳${e}`;
-        if (txt.length < 35) txt = `${s2} 잘하는 곳 중에서 후기 좋은 병원${e}`;
+        const aspect = aspects[Math.floor(Math.random()*aspects.length)];
+        let txt = `${s2} ${aspect} 병원${e}`;
+        if (txt.length < 35) {
+          const adj = skillAdj[Math.floor(Math.random()*skillAdj.length)];
+          txt = `${s2} ${adj} 병원 중에 ${aspect} 곳${e}`;
+        }
         return txt;
       };
       const qs = [lineWithLoc(), lineGeneral(), lineGeneral()]
         .map(s => s.replace(/\s+/g,' ').trim()).slice(0,3);
-      // Ensure diversity starts
-      const heads = qs.map(x => x.slice(0,2));
-      if (heads[0] === heads[1]) qs[1] = `그리고 ${qs[1]}`;
-      if (heads[0] === heads[2]) qs[2] = `또 ${qs[2]}`;
+      // Do not force fixed prefixes; keep natural phrasing
       return qs.map(s => s.slice(0,60));
     }
 
@@ -575,7 +645,9 @@ Self-check: 길이(35~60)·서비스 포함(각 문장 ≥1)·정확히 1개만 
       if (hasIdx === -1) {
         // inject into the first question
         const svc = services[0] || '상담';
-        questions[0] = `${locWord} 쪽에서 ${svc} 잘하는 곳 추천받고 싶은데, 실제로 괜찮은 병원 있을까요?`;
+        const adjPool = ['전문으로 하는','경험 많은','평이 좋은','유명한','케이스가 많은'];
+        const adj = adjPool[Math.floor(Math.random()*adjPool.length)];
+        questions[0] = `${locWord}에서 ${svc} ${adj} 병원 추천해줄래?`;
       } else {
         // remove extra mentions if any
         questions = questions.map((q,i) => i===hasIdx ? q : q.replaceAll(locWord, '').trim());

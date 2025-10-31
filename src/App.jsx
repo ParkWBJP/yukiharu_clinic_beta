@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, Link } from 'react-router-dom';
 import './App.css';
 import './i18n';
 import LanguageSelector from './components/LanguageSelector';
@@ -36,10 +36,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <header className="app-header">
-        <div className="branding" aria-label="YukiHaru AI">
+        <Link to="/" className="branding" aria-label="YukiHaru AI" style={{ textDecoration: 'none' }}>
           <span className="brand-gray">YukiHaru</span>
           <span className="brand-green"> AI</span>
-        </div>
+        </Link>
         <LanguageSelector />
       </header>
       <main>
@@ -53,4 +53,3 @@ export default function App() {
     </BrowserRouter>
   );
 }
-

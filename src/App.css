@@ -307,3 +307,17 @@ main { padding: 14px; }
 .top-actions { display: none; }
 
 .summary-note{margin-top:6px;color:var(--muted);font-size:12px;}
+[data-theme="dark"] :root { --ov-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+:root { --ov-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+.overview-card { max-width: 760px; margin: 0 auto 24px auto; padding: 16px 20px; border: 1px solid var(--border); border-radius: 16px; background: #fff; box-shadow: var(--ov-shadow); }
+[data-theme="dark"] .overview-card { background: #0f1418; }
+.overview-header { display:flex; align-items:flex-end; justify-content: space-between; margin-bottom: 10px; }
+.overview-title { font-weight:800; font-size: 20px; letter-spacing: -0.2px; }
+.overview-sub { color: var(--muted); font-size: 12px; }
+.ov-section { margin-top: 10px; font-weight:700; color: var(--fg-strong); }
+.ov-field { margin: 6px 0; line-height: 1.65; }
+.ov-field-name { display:inline-block; min-width: 84px; font-weight:600; color: var(--fg-strong); }
+.pill-wrap { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 4px 0; }
+.pill { padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,0.06); font-size: 12px; border: 1px solid var(--border); }
+[data-theme="dark"] .pill { background: rgba(255,255,255,0.08); }
+.ov-divider { height:1px; background: var(--border); margin: 10px 0; }
