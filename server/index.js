@@ -354,7 +354,7 @@ app.post('/api/generate/questions', async (req, res) => {
     const fallbackLocation = String(bodyIn.fallbackLocation || '').trim();
     const tone = String(bodyIn.tone || '실제 친근한 AI와 대화하듯');
 
-    const system = '너는 병원 고객 Q&A 도우미야. 아래 규칙을 엄격히 지켜서 질문만 생성해.';
+    const system = '너는 병원을 찾는 실제 사람(고객)이다. 친근한 AI에게 병원 추천을 부탁하는 대화 중이며, 아래 규칙을 엄격히 지켜 "질문 문장"만 만든다. 과장/광고/의학적 단정 표현은 절대 금지. 출력은 JSON ONLY.';
     const rules = `입력
 persona: ${persona.age_range || persona.ageRange || ''} / ${persona.gender || ''}
 services: ${services.join(', ')}
@@ -362,15 +362,24 @@ locationKeyword: ${locationKeyword}
 fallbackLocation: ${fallbackLocation}
 tone: ${tone}
 
+목표
+- 병원 입력 폼의 services를 근거로, 해당 페르소나가 실제 AI에게 "추천을 부탁하는 자연스러운 질문" 3개 생성
+
 생성 규칙
-- 정확히 3문장. 각 20~60자, 최대 2문장 허용.
-- 3개 중 정확히 1개만 위치를 자연스럽게 포함. 우선순위: locationKeyword → 없으면 fallbackLocation.
-- 나머지 2개는 위치 언급 금지.
-- 모든 질문에 services 중 1~2개를 꼭 녹여 쓸 것(과장 금지, 정보 확인 중심).
-- 연령대/성별 말투 반영, 표현·문두 다양화.
-- 사이트 콘텐츠는 쓰지 말고, services만 근거로.
-- 중복/유사 패턴 금지.
-출력: JSON ONLY {"questions":["q1","q2","q3"]}`;
+1) 정확히 3문장 생성
+2) 세 문장 모두에 services 중 1~2개를 자연스럽게 포함(정보/추천 요청 중심, 과장 금지)
+3) 세 문장 중 정확히 1문장만 위치 포함(우선순위: locationKeyword → 없으면 fallbackLocation). 나머지 2문장은 위치 언급 금지
+4) 추천/탐색 맥락 유지(좋은 곳/후기/예약/상담 접근성 등). 예: "괜찮은 곳 있을까?", "후기 좋은 데 추천해줘"
+5) 연령대/성별 말투 반영(20~30대: 가볍고 친근 / 40~50대: 현실적·신뢰 / 60대+: 공손)
+6) 길이: 각 25~65자, 최대 2문장(짧은 도입+질문 허용)
+7) 중복/유사 문체 금지(문두/접속부/어휘 다양화)
+8) 사이트 콘텐츠는 쓰지 말고, services만 근거로 작성
+
+출력 형식
+- JSON ONLY: {"questions":["문장1","문장2","문장3"]}
+- 마크다운/설명/주석/코드펜스 금지
+
+Self-check: 길이(25~65자)·서비스 포함(각 문장 1개 이상)·위치 1문장만 포함·톤/중복 다양화. 하나라도 어기면 스스로 재작성 후 최종 JSON만 출력`;
 
     const prompt = {
       model: OPENAI_MODEL,
@@ -415,9 +424,9 @@ tone: ${tone}
     let questions = Array.isArray(parsed.questions) ? parsed.questions.map(String) : [];
 
     function includesLocationOnce(qs) {
-      const loc = locationKeyword || fallbackLocation;
-      if (!loc) return true; // if nothing to enforce, accept
-      const count = qs.reduce((n, q) => n + (String(q).includes(locationKeyword) || (!locationKeyword && String(q).includes(fallbackLocation)) ? 1 : 0), 0);
+      const locWord = locationKeyword || fallbackLocation;
+      if (!locWord) return true; // nothing to enforce
+      const count = qs.reduce((n, q) => n + (String(q).includes(locWord) ? 1 : 0), 0);
       return count === 1;
     }
     function containsService(q) {
@@ -425,7 +434,10 @@ tone: ${tone}
     }
     function basicValid(qs) {
       if (qs.length !== 3) return false;
-      const lenOk = qs.every(q => String(q).length >= 10 && String(q).length <= 80);
+      const lenOk = qs.every(q => {
+        const L = String(q).trim().length;
+        return L >= 25 && L <= 65;
+      });
       const svcOk = qs.every(q => containsService(q));
       return lenOk && svcOk && includesLocationOnce(qs);
     }
@@ -436,7 +448,7 @@ tone: ${tone}
         model: OPENAI_MODEL,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: rules + '\n\n형식을 엄격히 지키고, 조건 불충족 시 재작성. JSON ONLY.' }
+          { role: 'user', content: rules + '\n\n방금 출력은 조건을 일부 위반했어. 길이/서비스 포함/위치 1문장만 포함/중복 최소화를 모두 만족하도록 JSON ONLY로 다시 생성해.' }
         ],
         temperature: 0.4,
         response_format: { type: 'json_object' }
@@ -468,12 +480,20 @@ tone: ${tone}
       let hasIdx = questions.findIndex(q => String(q).includes(locWord));
       if (hasIdx === -1) {
         // inject into the first question
-        questions[0] = `${locWord} 근처에서 ${services[0] || '상담'} 관련해 여쭤보고 싶은데, 예약은 어떻게 하면 좋을까요?`;
+        const svc = services[0] || '상담';
+        questions[0] = `${locWord} 쪽에서 ${svc} 잘하는 곳 추천받고 싶은데, 실제로 괜찮은 병원 있을까요?`;
       } else {
         // remove extra mentions if any
         questions = questions.map((q,i) => i===hasIdx ? q : q.replaceAll(locWord, '').trim());
       }
     }
+
+    // Ensure every question includes at least one service keyword
+    if (services.length) {
+      questions = questions.map((q) => (containsService(q) ? q : `${services[0]} 관련해서 ${String(q).replaceAll('  ',' ').trim()}`));
+    }
+    // Trim overly long questions to <= 65 chars (best effort)
+    questions = questions.map((q) => String(q).trim().slice(0, 65));
 
     return res.json({ questions });
   } catch (e) {
