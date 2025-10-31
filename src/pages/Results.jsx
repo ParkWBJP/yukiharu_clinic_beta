@@ -213,7 +213,7 @@ export default function ResultsPage() {
   async function fetchOnePersona(idx, retry = 0, hints = {}) {
     const startedAt = Date.now();
     const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
-      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
+      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
     const controller = new AbortController();
     activeControllers.current.add(controller);
     let softTimer = null;
@@ -424,7 +424,7 @@ export default function ResultsPage() {
       }
     } catch {}
     const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
-      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790' : '/api');
+      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
     setSummary({ status: 'loading', lines: [] });
     fetch(`${API_BASE}/summarize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
       .then((r) => r.json())
