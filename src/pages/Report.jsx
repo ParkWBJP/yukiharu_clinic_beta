@@ -28,6 +28,29 @@ export default function ReportPage() {
   const top5 = ranking.slice(0,5);
   const personaList = Array.isArray(data?.personas) ? data.personas : [];
   const [detailIdx, setDetailIdx] = React.useState(-1);
+  const [topAnalysis, setTopAnalysis] = React.useState([]);
+  const [miniCards, setMiniCards] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!data) return;
+    // fetch top analysis once
+    const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
+      (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
+    if (top5.length) {
+      fetch(`${API_BASE}/report/analyze-top`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ domains: top5 }) })
+        .then(r=>r.json()).then(j => { if (Array.isArray(j?.items)) setTopAnalysis(j.items); }).catch(()=>{});
+    }
+    // synthesize 3 mini-cards from cached overview lines
+    try {
+      const ov = JSON.parse(localStorage.getItem('yh_overview')||'null');
+      const lines = Array.isArray(ov?.lines) ? ov.lines.join(' ') : '';
+      const cards = [];
+      if (/후기|리뷰/.test(lines)) cards.push({ icon:'💬', title:'후기 데이터 구조화', hint:'후기/사례를 Schema로 구조화하면 신뢰도 인식이 올라갑니다.' });
+      if (/시술|수술|설명|가이드/.test(lines)) cards.push({ icon:'🧩', title:'시술 의미 구조 개선', hint:'시술명/개념을 자연어로 다양하게 표현하면 주제 인식이 향상됩니다.' });
+      if (/보험|가격|청구/.test(lines)) cards.push({ icon:'💡', title:'보험/가격 문맥 명시', hint:'보험/가격 문구를 명시적으로 안내하면 탐색률이 높아집니다.' });
+      setMiniCards(cards.slice(0,3));
+    } catch {}
+  }, [data]);
   return (
     <div className="container" style={{ maxWidth: 1100 }}>
       <div className="card" style={{ margin: '18px auto' }}>
@@ -81,16 +104,28 @@ export default function ReportPage() {
               {top5.map((s)=> (
                 <div key={s.domain} className="card">
                   <div style={{ fontWeight:700 }}>{s.name || s.domain} <span className="muted small">({s.domain})</span></div>
-                  <div className="small" style={{ margin:'6px 0' }}>AI 요약: 키워드/이유 기반으로 상위에 노출됩니다.</div>
+                  <div className="small" style={{ margin:'6px 0' }}>
+                    {(() => {
+                      const a = (topAnalysis||[]).find(x => x.domain === s.domain);
+                      return a?.summary || 'AI 요약: 키워드/이유 기반으로 상위에 노출됩니다.';
+                    })()}
+                  </div>
                   <div className="small muted">인식 지표</div>
                   <div className="table-wrap">
                     <table className="table">
                       <tbody>
-                        <tr><td>시술 주제 인식도</td><td>높음</td></tr>
-                        <tr><td>사용자 경험 데이터</td><td>중간~높음</td></tr>
-                        <tr><td>문맥 명료도</td><td>중간</td></tr>
-                        <tr><td>의미 연결성</td><td>중간</td></tr>
-                        <tr><td>AI 접근 신호</td><td>중간</td></tr>
+                        {(() => {
+                          const a = (topAnalysis||[]).find(x => x.domain === s.domain);
+                          const sc = a?.scores || {};
+                          const rows = [
+                            ['시술 주제 인식도', sc.topic],
+                            ['사용자 경험 데이터', sc.ux],
+                            ['문맥 명료도', sc.clarity],
+                            ['의미 연결성', sc.connected],
+                            ['AI 접근 신호', sc.signals]
+                          ];
+                          return rows.map(([k,v],i)=>(<tr key={i}><td>{k}</td><td>{typeof v==='number'? Math.round(v*100)+'%':'중간'}</td></tr>));
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -111,11 +146,33 @@ export default function ReportPage() {
               ))}
             </div>
 
+            {/* Overview Mini Cards */}
+            <h3 style={{ marginTop: 16, marginBottom: 8 }}>AIO 개선 제안</h3>
+            <div className="grid">
+              {(miniCards.length? miniCards : [
+                {icon:'🧩', title:'시술 의미 구조 개선', hint:'시술명/개념을 자연어로 다양하게 표현하면 주제 인식 향상'},
+                {icon:'💬', title:'후기 데이터 구조화', hint:'후기/사례를 Schema로 구조화하여 신뢰도 강화'},
+                {icon:'💡', title:'보험/가격 문맥 명시', hint:'보험/가격 문구를 명시적으로 안내하여 탐색률 증대'}
+              ]).map((c,idx)=> (
+                <div key={idx} className="card"><div style={{fontWeight:700}}>{c.icon} {c.title}</div><div className="small muted">{c.hint}</div></div>
+              ))}
+            </div>
+
             {/* Trend Keywords */}
             <h3 style={{ marginTop: 16, marginBottom: 8 }}>경쟁 사이트 트렌드 키워드</h3>
             <div className="card">
-              <div className="pill-wrap">
-                {(trend.topKeywords||[]).map((t,idx)=> (<span key={idx} className="pill">{t.word} ({t.freq})</span>))}
+              <div className="pill-wrap" style={{ marginBottom:8 }}>
+                {(trend.topKeywords||[]).slice(0,18).map((t,idx)=> (<span key={idx} className="pill">{t.word} ({t.freq})</span>))}
+              </div>
+              <div>
+                {(trend.topKeywords||[]).slice(0,10).map((t,idx)=> (
+                  <div key={idx} style={{ display:'grid', gridTemplateColumns:'140px 1fr', alignItems:'center', gap:8, margin:'4px 0' }}>
+                    <div className="small muted">{t.word}</div>
+                    <div style={{ background:'#f1f3f5', height:8, borderRadius:999 }}>
+                      <div style={{ width:`${Math.min(100, t.freq*10)}%`, height:'100%', background:'#7ac143', borderRadius:999 }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 

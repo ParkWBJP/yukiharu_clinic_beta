@@ -474,8 +474,16 @@ app.post('/api/report/run', async (req, res) => {
           r.items.forEach(it => {
             const d = extractDomain(it?.url || '');
             if (!d) return;
-            if (!ranking.has(d)) ranking.set(d, { count: 0, keywords: new Set(), sampleUrl: it.url, name: it.name || d });
+            if (!ranking.has(d)) ranking.set(d, { count: 0, keywords: new Set(), sampleUrl: it.url, name: it.name || d, intentsCount: {} });
             const rec = ranking.get(d); rec.count += 1; (it.keywords||[]).forEach(k => rec.keywords.add(k));
+            // classify per-question intent and accumulate per-domain
+            const s = String(q || '');
+            const label = (/후기|리뷰|경험|케이스/.test(s) ? 'review'
+              : /가격|비용|비싸|저렴/.test(s) ? 'price'
+              : /회복|기간|붓기|다운타임/.test(s) ? 'recovery'
+              : /자연스럽|티 ?안|흉터/.test(s) ? 'natural'
+              : /보험|청구|실비/.test(s) ? 'insurance' : 'info');
+            rec.intentsCount[label] = (rec.intentsCount[label] || 0) + 1;
           });
         });
       });
@@ -561,13 +569,51 @@ app.post('/api/report/run', async (req, res) => {
     ];
 
     const topDomains = Array.from(ranking.entries())
-      .map(([domain, v]) => ({ domain, name: v.name, count: v.count, sampleUrl: v.sampleUrl, keywords: Array.from(v.keywords).slice(0,10) }))
+      .map(([domain, v]) => ({ domain, name: v.name, count: v.count, sampleUrl: v.sampleUrl, keywords: Array.from(v.keywords).slice(0,10), intentsCount: v.intentsCount }))
       .sort((a,b) => b.count - a.count)
       .slice(0, 15);
 
     return res.json({ ok: true, personas: perPersona, ranking: topDomains, intents, trend: { topKeywords }, visibility, totalQuestions: perPersona.reduce((n,p)=> n + (Array.isArray(p.questions) ? p.questions.length : 0), 0) });
   } catch (e) {
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
+// Analyze top 5 domains: summarize why they rank and provide scores
+app.post('/api/report/analyze-top', async (req, res) => {
+  try {
+    if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+    const items = Array.isArray(req.body?.domains) ? req.body.domains.slice(0,5) : [];
+    if (!items.length) return res.json({ ok: true, items: [] });
+    const qTimeoutMs = Number(process.env.REPORT_TOP_TIMEOUT_MS || 20000);
+
+    const lines = items.map((d, i) => (
+      `#${i+1} ${d.name || d.domain}\n- domain: ${d.domain}\n- sample: ${d.sampleUrl || ''}\n- count: ${d.count || 0}\n- keywords: ${(d.keywords||[]).slice(0,10).join(', ')}`
+    )).join('\n\n');
+    const prompt = {
+      model: OPENAI_MODEL,
+      messages: [
+        { role: 'system', content: '다음 사이트 목록을 보고, 왜 AI가 이 사이트를 자주 추천했는지 요약하고, 5개 지표 점수를 0~1 사이로 부여하세요. JSON ONLY.' },
+        { role: 'user', content: `입력:\n${lines}\n\n출력(JSON ONLY): {"items":[{"domain":"...","summary":"...","scores":{"topic":0.8,"ux":0.7,"clarity":0.6,"connected":0.5,"signals":0.4}}]}` }
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' }
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), qTimeoutMs);
+    const r = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...prompt, max_tokens: 600 }), signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!r.ok) return res.json({ ok: true, items: [] });
+    const data = await r.json();
+    let out = {};
+    try { out = JSON.parse(String(data.choices?.[0]?.message?.content || '{}').replace(/```json|```/g,'')); } catch { out = {}; }
+    const arr = Array.isArray(out?.items) ? out.items : [];
+    return res.json({ ok: true, items: arr });
+  } catch (e) {
+    return res.status(200).json({ ok: true, items: [] });
   }
 });
 
