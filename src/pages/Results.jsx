@@ -485,35 +485,24 @@ export default function ResultsPage() {
       <div className="overview-card">
         <div className="overview-header">
           <div className="overview-title">{hospitalName ? `${hospitalName} AI Overview` : 'AI Overview'}</div>
-          <div className="overview-sub">AI Overview</div>
-        </div>
-        <div className="summary-note muted small">
-          {done}/{TOTAL} 생성됨 · 평균 {Math.round(avgLatency)}ms {done < TOTAL ? <>· ETA ~ {Math.max(0, Math.round((TOTAL - done) * (avgLatency || 1000) / CONCURRENCY / 1000))}s</> : null}
+          <div className="overview-sub">간략 요약</div>
         </div>
         {summary.status === 'loading' ? (
           <div className="summary-loading"><span className="spinner" /> 오버뷰 생성 중</div>
         ) : (
           <div className="overview-body">
-            {summary.lines.map((raw, i) => {
-              const l = String(raw || '');
-              if (/^\s*$/.test(l)) return <div key={i} className="ov-divider" />;
-              if (l.startsWith('🧠') || l.startsWith('🔍') || l.startsWith('🚀')) return <div key={i} className="ov-section">{l}</div>;
+            {(summary.lines||[]).filter((line)=>{
+              const s = String(line||'');
+              if (s.startsWith('🚀')) return false; // 제안은 리포트에서
+              return s.startsWith('🧠') || s.startsWith('🔍') || s.startsWith('주요 키워드');
+            }).map((raw, i) => {
+              const l = String(raw||'');
               if (l.startsWith('주요 키워드')) {
                 const tags = l.replace('주요 키워드 :','').trim().split(/\s+/).filter(t=>t.startsWith('#'));
                 return <div key={i} className="pill-wrap">{tags.map((t,idx)=>(<span className="pill" key={idx}>{t.replace(/^#/, '')}</span>))}</div>;
               }
-              const m = l.match(/^([^:：]+)\s*[:：]\s*(.*)$/);
-              if (m) {
-                return (
-                  <div className="ov-field" key={i}>
-                    <span className="ov-field-name">{m[1]}</span>
-                    <span>{m[2]}</span>
-                  </div>
-                );
-              }
-              return <div key={i} className="ov-field">{l}</div>;
+              return <div key={i} className="ov-section">{l}</div>;
             })}
-            <div className="summary-note muted small">This overview is generated from your website content.</div>
           </div>
         )}
       </div>

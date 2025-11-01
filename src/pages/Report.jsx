@@ -30,6 +30,8 @@ export default function ReportPage() {
   const [detailIdx, setDetailIdx] = React.useState(-1);
   const [topAnalysis, setTopAnalysis] = React.useState([]);
   const [miniCards, setMiniCards] = React.useState([]);
+  const [ovSummary, setOvSummary] = React.useState({ status: 'idle', lines: [] });
+  const [hospitalName, setHospitalName] = React.useState('');
 
   React.useEffect(() => {
     if (!data) return;
@@ -40,7 +42,7 @@ export default function ReportPage() {
       fetch(`${API_BASE}/report/analyze-top`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ domains: top5 }) })
         .then(r=>r.json()).then(j => { if (Array.isArray(j?.items)) setTopAnalysis(j.items); }).catch(()=>{});
     }
-    // synthesize 3 mini-cards from cached overview lines
+    // synthesize 3 mini-cards from cached/detailed overview lines
     try {
       const ov = JSON.parse(localStorage.getItem('yh_overview')||'null');
       const lines = Array.isArray(ov?.lines) ? ov.lines.join(' ') : '';
@@ -51,6 +53,27 @@ export default function ReportPage() {
       setMiniCards(cards.slice(0,3));
     } catch {}
   }, [data]);
+
+  // Load detailed overview (same as Results layout)
+  React.useEffect(() => {
+    try {
+      let form = null; try { form = JSON.parse(localStorage.getItem('hospitalForm')||'null'); } catch {}
+      if (form?.hospitalName) setHospitalName(form.hospitalName);
+      const cached = JSON.parse(localStorage.getItem('yh_overview')||'null');
+      if (cached && Array.isArray(cached.lines)) { setOvSummary({ status:'done', lines: cached.lines }); return; }
+    } catch {}
+    // fallback fetch if missing
+    try {
+      let form = null; try { form = JSON.parse(localStorage.getItem('hospitalForm')||'null'); } catch {}
+      const url = form?.website; if (!url) { setOvSummary({ status:'error', lines: [] }); return; }
+      setOvSummary({ status:'loading', lines: [] });
+      const API_BASE = (import.meta.env.VITE_API_BASE && String(import.meta.env.VITE_API_BASE)) ||
+        (typeof window !== 'undefined' && window.location && window.location.hostname === 'localhost' ? 'http://localhost:8790/api' : '/api');
+      fetch(`${API_BASE}/summarize`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url }) })
+        .then(r=>r.json()).then(j=>{ if (Array.isArray(j?.lines)) setOvSummary({ status:'done', lines: j.lines }); else setOvSummary({ status:'error', lines: [] }); })
+        .catch(()=> setOvSummary({ status:'error', lines: [] }));
+    } catch { setOvSummary({ status:'error', lines: [] }); }
+  }, []);
   return (
     <div className="container" style={{ maxWidth: 1100 }}>
       <div className="card" style={{ margin: '18px auto' }}>
@@ -58,6 +81,37 @@ export default function ReportPage() {
         {!data && <p className="muted">리포트 데이터를 불러오는 중입니다…</p>}
         {data && (
           <>
+            {/* Overview (detailed, same layout as Results) */}
+            <div className="overview-card" style={{ marginBottom: 12 }}>
+              <div className="overview-header">
+                <div className="overview-title">{hospitalName ? `${hospitalName} AI Overview` : 'AI Overview'}</div>
+                <div className="overview-sub">AI Overview</div>
+              </div>
+              {ovSummary.status === 'loading' ? (
+                <div className="summary-loading"><span className="spinner" /> 오버뷰 생성 중</div>
+              ) : (
+                <div className="overview-body">
+                  {(ovSummary.lines||[]).map((raw, i) => {
+                    const l = String(raw || '');
+                    if (/^\s*$/.test(l)) return <div key={i} className="ov-divider" />;
+                    if (l.startsWith('🧠') || l.startsWith('🔍') || l.startsWith('🚀')) return <div key={i} className="ov-section">{l}</div>;
+                    if (l.startsWith('주요 키워드')) {
+                      const tags = l.replace('주요 키워드 :','').trim().split(/\s+/).filter(t=>t.startsWith('#'));
+                      return <div key={i} className="pill-wrap">{tags.map((t,idx)=>(<span className="pill" key={idx}>{t.replace(/^#/, '')}</span>))}</div>;
+                    }
+                    const m = l.match(/^([^:：]+)\s*[:：]\s*(.*)$/);
+                    if (m) return (
+                      <div key={i} className="row">
+                        <div className="row-key">{m[1]}</div>
+                        <div className="row-val">{m[2]}</div>
+                      </div>
+                    );
+                    return <div key={i} className="ov-line">{l}</div>;
+                  })}
+                  <div className="summary-note muted small">This overview is generated from your website content.</div>
+                </div>
+              )}
+            </div>
             <h3 style={{ marginTop: 8, marginBottom: 6 }}>질문 결과 랭킹</h3>
             <div className="toolbar" style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
               <label className="small muted">필터:</label>
