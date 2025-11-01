@@ -404,7 +404,9 @@ app.post('/api/report/run', async (req, res) => {
   try {
     if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
     const personasIn = Array.isArray(req.body?.personas) ? req.body.personas : [];
-    const limitMs = Number(process.env.REPORT_TIMEOUT_MS || 90000);
+    // Per-question timeout (shorter) and limited concurrency to avoid long waits
+    const qTimeoutMs = Number(process.env.REPORT_Q_TIMEOUT_MS || 25000);
+    const poolSize = Math.max(1, Number(process.env.REPORT_CONCURRENCY || 4));
 
     const systemFromPersona = (p) => {
       const age = p.ageRange || p.age_group || p.age_range || '';
@@ -430,7 +432,7 @@ app.post('/api/report/run', async (req, res) => {
 
     const askOne = async (persona, question) => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), limitMs);
+      const timer = setTimeout(() => controller.abort(), qTimeoutMs);
       const sys = systemFromPersona(persona);
       const prompt = {
         model: OPENAI_MODEL,
@@ -444,7 +446,7 @@ app.post('/api/report/run', async (req, res) => {
       try {
         const r = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
           method: 'POST', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...prompt, max_tokens: 600 }), signal: controller.signal
+          body: JSON.stringify({ ...prompt, max_tokens: 450 }), signal: controller.signal
         });
         clearTimeout(timer);
         if (!r.ok) return { items: [] };
@@ -457,35 +459,47 @@ app.post('/api/report/run', async (req, res) => {
       } catch { clearTimeout(timer); return { items: [] }; }
     };
 
-    // Run with limited concurrency
-    const allResults = [];
-    const ranking = new Map(); // domain -> {count, keywords:Set, sampleUrl}
-    const perPersona = [];
-
-    for (let i = 0; i < personasIn.length; i++) {
-      const p = personasIn[i] || {};
-      const qList = (p.questions || []).map(q => (typeof q === 'string' ? q : (q?.text || ''))).slice(0,3);
-      const resultForPersona = { id: p.id || i+1, name: p.name || `P${i+1}`, questions: [], summary: '' };
-      for (let j = 0; j < qList.length; j++) {
-        const q = qList[j];
-        const r = await askOne(p, q);
-        resultForPersona.questions.push({ q, items: r.items });
-        r.items.forEach(it => {
-          const d = extractDomain(it?.url || '');
-          if (!d) return;
-          if (!ranking.has(d)) ranking.set(d, { count: 0, keywords: new Set(), sampleUrl: it.url, name: it.name || d });
-          const rec = ranking.get(d); rec.count += 1; (it.keywords||[]).forEach(k => rec.keywords.add(k));
+    // Run with limited concurrency (promise pool)
+    const ranking = new Map(); // domain -> {count, keywords:Set, sampleUrl, name}
+    const perPersona = personasIn.map((p, i) => ({ id: p?.id || i+1, name: p?.name || `P${i+1}`, questions: [], summary: '' }));
+    const tasks = [];
+    personasIn.forEach((p, i) => {
+      const qList = (p?.questions || []).map(q => (typeof q === 'string' ? q : (q?.text || ''))).slice(0,3);
+      qList.forEach((q, j) => {
+        if (!q) return;
+        tasks.push(async () => {
+          const r = await askOne(p, q);
+          const bucket = perPersona[i];
+          bucket.questions[j] = { q, items: r.items };
+          r.items.forEach(it => {
+            const d = extractDomain(it?.url || '');
+            if (!d) return;
+            if (!ranking.has(d)) ranking.set(d, { count: 0, keywords: new Set(), sampleUrl: it.url, name: it.name || d });
+            const rec = ranking.get(d); rec.count += 1; (it.keywords||[]).forEach(k => rec.keywords.add(k));
+          });
         });
-      }
-      perPersona.push(resultForPersona);
+      });
+    });
+
+    async function runPool(fns, limit) {
+      const queue = fns.slice();
+      const workers = new Array(Math.min(limit, queue.length)).fill(0).map(async () => {
+        while (queue.length) {
+          const fn = queue.shift();
+          try { await fn(); } catch { /* ignore per-task errors */ }
+        }
+      });
+      await Promise.all(workers);
     }
+
+    await runPool(tasks, poolSize);
 
     const topDomains = Array.from(ranking.entries())
       .map(([domain, v]) => ({ domain, name: v.name, count: v.count, sampleUrl: v.sampleUrl, keywords: Array.from(v.keywords).slice(0,10) }))
       .sort((a,b) => b.count - a.count)
       .slice(0, 15);
 
-    return res.json({ ok: true, personas: perPersona, ranking: topDomains, totalQuestions: perPersona.reduce((n,p)=> n + p.questions.length, 0) });
+    return res.json({ ok: true, personas: perPersona, ranking: topDomains, totalQuestions: perPersona.reduce((n,p)=> n + (Array.isArray(p.questions) ? p.questions.length : 0), 0) });
   } catch (e) {
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
   }
