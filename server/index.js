@@ -494,12 +494,78 @@ app.post('/api/report/run', async (req, res) => {
 
     await runPool(tasks, poolSize);
 
+    // Intent classification (simple heuristic from question text)
+    const intentMap = {
+      review: [/후기|리뷰|경험|케이스/],
+      price: [/가격|비용|비싸|저렴/],
+      recovery: [/회복|기간|붓기|다운타임/],
+      natural: [/자연스럽|티 ?안|흉터/],
+      insurance: [/보험|청구|실비/],
+      info: [/설명|정보|절차|방법/]
+    };
+    const intents = [];
+    const intentAgg = new Map(); // label -> {count, linkSum}
+    perPersona.forEach((pp, i) => {
+      const src = personasIn[i] || {};
+      (pp.questions || []).forEach((qrec) => {
+        const q = String(qrec?.q || '');
+        let label = 'info';
+        for (const [k, regs] of Object.entries(intentMap)) {
+          if (regs.some(r => r.test(q))) { label = k; break; }
+        }
+        const links = Array.isArray(qrec?.items) ? qrec.items.length : 0;
+        const cur = intentAgg.get(label) || { count: 0, linkSum: 0 };
+        cur.count += 1; cur.linkSum += links; intentAgg.set(label, cur);
+      });
+    });
+    intentAgg.forEach((v, k) => intents.push({ label: k, count: v.count, avgLinks: v.count ? +(v.linkSum / v.count).toFixed(2) : 0 }));
+
+    // Trend keywords (top N from collected keywords)
+    const freq = new Map();
+    ranking.forEach((rec) => { /* noop: keywords per domain accumulated below */ });
+    perPersona.forEach((pp) => {
+      (pp.questions || []).forEach((qrec) => {
+        (qrec.items || []).forEach((it) => {
+          (it.keywords || []).forEach((kw) => {
+            const k = String(kw || '').trim(); if (!k) return;
+            freq.set(k, (freq.get(k) || 0) + 1);
+          });
+        });
+      });
+    });
+    const topKeywords = Array.from(freq.entries()).sort((a,b)=> b[1]-a[1]).slice(0,30).map(([word,freq])=>({word,freq}));
+
+    // Visibility map (very rough heuristic from reasons/keywords)
+    const vis = { topic:0, reviews:0, clarity:0, connected:0, signals:0, total:0 };
+    perPersona.forEach((pp) => {
+      (pp.questions || []).forEach((qrec) => {
+        (qrec.items || []).forEach((it) => {
+          const r = String(it.reason||'');
+          const kws = (it.keywords||[]).join(' ');
+          if (/시술|수술|코성형|리프팅|쌍꺼풀|치료|시술명/.test(r+kws)) vis.topic += 1;
+          if (/후기|리뷰|전후|사진/.test(r+kws)) vis.reviews += 1;
+          if (/설명|명확|정리|요약/.test(r+kws)) vis.clarity += 1;
+          if (/연결|링크|내부/.test(r+kws)) vis.connected += 1;
+          if (/schema|태그|메타|구조화|sitemap|robots/.test(r+kws)) vis.signals += 1;
+          vis.total += 1;
+        });
+      });
+    });
+    const denom = vis.total || 1;
+    const visibility = [
+      { label: '시술 주제 인식도', score: +(vis.topic/denom).toFixed(2) },
+      { label: '후기/경험 신뢰도', score: +(vis.reviews/denom).toFixed(2) },
+      { label: '문맥 명료도', score: +(vis.clarity/denom).toFixed(2) },
+      { label: '의미 연결성', score: +(vis.connected/denom).toFixed(2) },
+      { label: 'AI 접근 신호', score: +(vis.signals/denom).toFixed(2) }
+    ];
+
     const topDomains = Array.from(ranking.entries())
       .map(([domain, v]) => ({ domain, name: v.name, count: v.count, sampleUrl: v.sampleUrl, keywords: Array.from(v.keywords).slice(0,10) }))
       .sort((a,b) => b.count - a.count)
       .slice(0, 15);
 
-    return res.json({ ok: true, personas: perPersona, ranking: topDomains, totalQuestions: perPersona.reduce((n,p)=> n + (Array.isArray(p.questions) ? p.questions.length : 0), 0) });
+    return res.json({ ok: true, personas: perPersona, ranking: topDomains, intents, trend: { topKeywords }, visibility, totalQuestions: perPersona.reduce((n,p)=> n + (Array.isArray(p.questions) ? p.questions.length : 0), 0) });
   } catch (e) {
     return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
   }
