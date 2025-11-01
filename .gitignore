@@ -29,3 +29,6 @@ id_ed25519
 .DS_Store
 Thumbs.db
 *.log
+
+# Windows weird file accidentally created
+NUL

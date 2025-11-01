@@ -399,6 +399,98 @@ app.post('/api/summarize', async (req, res) => {
   }
 });
 
+// Run AI Report: execute persona-context questions and aggregate domains
+app.post('/api/report/run', async (req, res) => {
+  try {
+    if (!OPENAI_API_KEY) return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+    const personasIn = Array.isArray(req.body?.personas) ? req.body.personas : [];
+    const limitMs = Number(process.env.REPORT_TIMEOUT_MS || 90000);
+
+    const systemFromPersona = (p) => {
+      const age = p.ageRange || p.age_group || p.age_range || '';
+      const gender = p.gender || '';
+      const purpose = (p.purposes && p.purposes[0]) || p.searchPurpose || '';
+      const occ = (p.jobs && p.jobs[0]) || p.occupation || '';
+      const budget = typeof p.budget === 'number' ? `${p.budget}만원` : (p.budget || '');
+      const lines = [];
+      if (age || gender) lines.push(`이 사용자는 ${age} ${gender}입니다.`.trim());
+      if (occ) lines.push(`직업은 ${occ}이며 시간 제약을 고려합니다.`);
+      if (purpose) lines.push(`주요 목적은 ${purpose} 단계로, 정보 수집에 초점을 둡니다.`);
+      if (budget) lines.push(`예산은 약 ${budget} 수준이며 가성비를 선호합니다.`);
+      lines.push('후기 신뢰도와 회복 기간을 중요하게 고려합니다.');
+      return `[PersonaContext]\n${lines.join(' ')}`;
+    };
+
+    const extractDomain = (u) => {
+      try {
+        const url = new URL(u.startsWith('http') ? u : `https://${u}`);
+        return url.hostname.replace(/^www\./,'');
+      } catch { return null; }
+    };
+
+    const askOne = async (persona, question) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), limitMs);
+      const sys = systemFromPersona(persona);
+      const prompt = {
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: `${sys}\n지시: 캐릭터 연기는 하지 말고, 위 조건의 사용자에게 가장 적합한 병원을 조사하듯 추천하세요. 응답은 JSON ONLY로 다음 구조를 따르세요.` },
+          { role: 'user', content: `질문: ${String(question || '').trim()}\n\n출력(JSON ONLY): {"items":[{"name":"사이트명","url":"https://...","reason":"선정 이유","keywords":["키1","키2"]} ... 최대 5개]}` }
+        ],
+        temperature: 0.5,
+        response_format: { type: 'json_object' }
+      };
+      try {
+        const r = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+          method: 'POST', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...prompt, max_tokens: 600 }), signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (!r.ok) return { items: [] };
+        const data = await r.json();
+        const content = data.choices?.[0]?.message?.content || '{}';
+        let parsed = {};
+        try { parsed = JSON.parse(String(content).replace(/```json|```/g,'')); } catch { parsed = {}; }
+        const items = Array.isArray(parsed.items) ? parsed.items.slice(0,5) : [];
+        return { items };
+      } catch { clearTimeout(timer); return { items: [] }; }
+    };
+
+    // Run with limited concurrency
+    const allResults = [];
+    const ranking = new Map(); // domain -> {count, keywords:Set, sampleUrl}
+    const perPersona = [];
+
+    for (let i = 0; i < personasIn.length; i++) {
+      const p = personasIn[i] || {};
+      const qList = (p.questions || []).map(q => (typeof q === 'string' ? q : (q?.text || ''))).slice(0,3);
+      const resultForPersona = { id: p.id || i+1, name: p.name || `P${i+1}`, questions: [], summary: '' };
+      for (let j = 0; j < qList.length; j++) {
+        const q = qList[j];
+        const r = await askOne(p, q);
+        resultForPersona.questions.push({ q, items: r.items });
+        r.items.forEach(it => {
+          const d = extractDomain(it?.url || '');
+          if (!d) return;
+          if (!ranking.has(d)) ranking.set(d, { count: 0, keywords: new Set(), sampleUrl: it.url, name: it.name || d });
+          const rec = ranking.get(d); rec.count += 1; (it.keywords||[]).forEach(k => rec.keywords.add(k));
+        });
+      }
+      perPersona.push(resultForPersona);
+    }
+
+    const topDomains = Array.from(ranking.entries())
+      .map(([domain, v]) => ({ domain, name: v.name, count: v.count, sampleUrl: v.sampleUrl, keywords: Array.from(v.keywords).slice(0,10) }))
+      .sort((a,b) => b.count - a.count)
+      .slice(0, 15);
+
+    return res.json({ ok: true, personas: perPersona, ranking: topDomains, totalQuestions: perPersona.reduce((n,p)=> n + p.questions.length, 0) });
+  } catch (e) {
+    return res.status(500).json({ error: 'server_error', detail: String(e?.message || e) });
+  }
+});
+
 // Generate 3 natural questions (exactly 1 with location) from form/persona context
 app.post('/api/generate/questions', async (req, res) => {
   try {

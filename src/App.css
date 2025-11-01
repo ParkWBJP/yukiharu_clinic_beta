@@ -204,6 +204,13 @@ main { padding: 14px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
 
+/* simple table */
+.table-wrap { overflow: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th, .table td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+.table th { background: #fafafa; font-weight: 700; }
+[data-theme="dark"] .table th { background: #12181d; }
+
 /* Persona Card */
 .persona-card { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 0 16px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); opacity: 0; transform: translateY(6px); animation: appear .35s ease forwards; overflow: hidden; }
 [data-theme="dark"] .persona-card { background: #0f1418; box-shadow: none; }
