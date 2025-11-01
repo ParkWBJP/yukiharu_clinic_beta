@@ -532,7 +532,13 @@ export default function ResultsPage() {
         {(summary.status === 'error' || failed > 0) && (
           <button className="btn btn-primary" onClick={restartAll}>재시작</button>
         )}
-        <button className="btn btn-primary" onClick={()=>navigate('/report-loading')}>AI 검색 리포트 확인</button>
+        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+          <label className="small" style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <input type="checkbox" onChange={(e)=>{ try { localStorage.setItem('yh_accuracy_mode', e.target.checked ? '1':'0'); } catch {} }} defaultChecked={(()=>{ try { const v = localStorage.getItem('yh_accuracy_mode'); return v==='1'||v==='true'; } catch { return false; }})()} />
+            정확도 모드(실제 검색 기반)
+          </label>
+          <button className="btn btn-primary" onClick={()=>navigate('/report-loading')}>AI 검색 리포트 확인</button>
+        </div>
       </div>
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

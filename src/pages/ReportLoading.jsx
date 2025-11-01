@@ -33,7 +33,9 @@ export default function ReportLoading() {
           setError('페르소나가 없습니다. 결과 페이지에서 먼저 생성해 주세요.');
           return;
         }
-        const r = await fetch(`${API_BASE}/report/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personas: slim }) });
+        let accuracy = false;
+        try { const v = localStorage.getItem('yh_accuracy_mode'); accuracy = v === '1' || v === 'true'; } catch {}
+        const r = await fetch(`${API_BASE}/report/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personas: slim, accuracyMode: accuracy }) });
         if (!r.ok) throw new Error(`upstream:${r.status}`);
         const data = await r.json();
         if (cancelled) return;
