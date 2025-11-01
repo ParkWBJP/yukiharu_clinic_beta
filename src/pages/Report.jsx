@@ -266,14 +266,18 @@ export default function ReportPage() {
                     {(personaList[detailIdx].questions||[]).map((qrec,qi)=> (
                       <div key={qi} style={{ margin:'10px 0' }}>
                         <div style={{ fontWeight:700 }}>Q{qi+1}. {qrec.q}</div>
-                        <ul>
-                          {(qrec.items||[]).map((it,ii)=> (
-                            <li key={ii}>
-                              <a href={it.url} target="_blank" rel="noreferrer">{it.name || it.url}</a>
-                              <span className="small muted"> — {(it.keywords||[]).slice(0,5).join(', ')}</span>
-                            </li>
-                          ))}
-                        </ul>
+                        {(Array.isArray(qrec.items) && qrec.items.length > 0) ? (
+                          <ul>
+                            {qrec.items.map((it,ii)=> (
+                              <li key={ii}>
+                                <a href={it.url} target="_blank" rel="noreferrer">{it.name || it.url}</a>
+                                <span className="small muted"> — {(it.keywords||[]).slice(0,5).join(', ')}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="small muted">출처 부족: 이 질문에 대해 신뢰할 수 있는 URL을 찾지 못했습니다.</div>
+                        )}
                       </div>
                     ))}
                   </div>

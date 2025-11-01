@@ -437,10 +437,10 @@ app.post('/api/report/run', async (req, res) => {
       const prompt = {
         model: OPENAI_MODEL,
         messages: [
-          { role: 'system', content: `${sys}\n지시: 캐릭터 연기는 하지 말고, 위 조건의 사용자에게 가장 적합한 병원을 조사하듯 추천하세요. 응답은 JSON ONLY로 다음 구조를 따르세요.` },
-          { role: 'user', content: `질문: ${String(question || '').trim()}\n\n출력(JSON ONLY): {"items":[{"name":"사이트명","url":"https://...","reason":"선정 이유","keywords":["키1","키2"]} ... 최대 5개]}` }
+          { role: 'system', content: `${sys}\n지시: 캐릭터 연기는 금지합니다. 현실에 존재하는 병원/클리닉 웹사이트만 제시하세요. URL/도메인 추측·생성 금지. 확실치 않으면 빈 배열을 반환하세요. 응답은 JSON ONLY.` },
+          { role: 'user', content: `질문: ${String(question || '').trim()}\n\n요구사항:\n- 반드시 실제 사이트만 제시 (허위 금지)\n- url은 http/https 절대경로여야 함\n- 자신이 확신하지 못하면 items: []\n\n출력(JSON ONLY): {"items":[{"name":"사이트명","url":"https://...","reason":"선정 이유","keywords":["키1","키2"]}]}` }
         ],
-        temperature: 0.5,
+        temperature: 0.3,
         response_format: { type: 'json_object' }
       };
       try {
@@ -454,7 +454,23 @@ app.post('/api/report/run', async (req, res) => {
         const content = data.choices?.[0]?.message?.content || '{}';
         let parsed = {};
         try { parsed = JSON.parse(String(content).replace(/```json|```/g,'')); } catch { parsed = {}; }
-        const items = Array.isArray(parsed.items) ? parsed.items.slice(0,5) : [];
+        const itemsIn = Array.isArray(parsed.items) ? parsed.items : [];
+        // sanitize: drop invalid/missing urls, dedupe by domain, cap at 5
+        const out = [];
+        const seen = new Set();
+        for (const it of itemsIn) {
+          const url = String(it?.url || '').trim();
+          const name = String(it?.name || '').trim();
+          if (!/^https?:\/\//i.test(url)) continue;
+          let domain = '';
+          try { domain = new URL(url).hostname.replace(/^www\./,''); } catch { continue; }
+          if (!domain || /example\.com|localhost|invalid/i.test(domain)) continue;
+          if (seen.has(domain)) continue;
+          seen.add(domain);
+          out.push({ name: name || domain, url, reason: String(it?.reason || ''), keywords: Array.isArray(it?.keywords)? it.keywords.slice(0,8) : [] });
+          if (out.length >= 5) break;
+        }
+        const items = out;
         return { items };
       } catch { clearTimeout(timer); return { items: [] }; }
     };
