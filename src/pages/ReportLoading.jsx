@@ -29,6 +29,10 @@ export default function ReportLoading() {
         let personas = [];
         try { personas = JSON.parse(localStorage.getItem('yh_results_items') || '[]'); } catch {}
         const slim = personas.map(p => ({ id: p.id, name: p.name, ageRange: p.ageRange, gender: p.gender, budget: p.budget, purposes: p.purposes, questions: (p.questions||[]).map(q=> (typeof q === 'string' ? q : q.text)) }));
+        if (!Array.isArray(slim) || slim.length === 0) {
+          setError('페르소나가 없습니다. 결과 페이지에서 먼저 생성해 주세요.');
+          return;
+        }
         const r = await fetch(`${API_BASE}/report/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personas: slim }) });
         if (!r.ok) throw new Error(`upstream:${r.status}`);
         const data = await r.json();
@@ -77,4 +81,3 @@ export default function ReportLoading() {
     </div>
   );
 }
-

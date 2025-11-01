@@ -409,6 +409,10 @@ export default function ResultsPage() {
     setVisibleCount((n) => n || total);
   }, [items.length]);
   React.useEffect(() => { prevLenRef.current = items.length; }, [items.length]);
+  // Persist personas to localStorage whenever they change (ensures report-loading receives data)
+  React.useEffect(() => {
+    try { localStorage.setItem(LS_ITEMS, JSON.stringify(items)); } catch {}
+  }, [items]);
   const fetchOverview = React.useCallback(() => {
     let form = null;
     try { form = JSON.parse(localStorage.getItem('hospitalForm') || 'null'); } catch {}
